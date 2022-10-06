@@ -345,10 +345,7 @@ Next extract the data for each month in our dataframe from each month's environm
 t1<-unique(YT_2$month)
 
 t1<-sort(t1)
-
-#defaultW <- getOption("warn") 
-
-#options(warn = -1) 
+bias <- raster("~/Downloads/Marine/bias/Bias_AODN.tif")
 
 for (i in 1:length(unique(t1))){
   subsetYT<-YT_2[which(YT_2$month==unique(t1)[i]), ]
@@ -376,16 +373,16 @@ for (i in 1:length(unique(t1))){
   pres_p$pres <- 1
   
   
-  rpoints<-as.data.frame(xyFromCell(bias, sample(which(!is.na(values(bias))), 2000, prob=values(bias)[!is.na(values(bias))])))
+  rpoints<-as.data.frame(raster::xyFromCell(bias, sample(which(!is.na(values(bias))), 2000, prob=values(bias)[!is.na(values(bias))])))
   colnames(rpoints)<-c("longitude","latitude")
   xy.bk<-SpatialPoints(rpoints)
-  
+  raster::crs(xy.bk) <- raster::crs(EVstack)
   bkgEV <- as.data.frame(raster::extract(EVstack,xy.bk))
   bkg_p <- cbind(rpoints,bkgEV)
   bkg_p$pres <- 0
   
   dat1 <- rbind(pres_p,bkg_p)
-  write.csv(dat1,paste0("~/Downloads/Marine/data/env_dframe/env_",unique(t2)[i],".csv"),overwrite=TRUE)
+  write.csv(dat1,paste0("~/Downloads/Marine/data/env_dframe/env_",unique(t2)[i],".csv"))
 }
 ```
 
