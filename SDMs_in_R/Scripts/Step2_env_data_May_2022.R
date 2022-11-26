@@ -59,7 +59,8 @@ freq(NVIS1,value=44)
 # A handy function to clip points to a polygon
 # clipped points <- spatial_point_file[polygon_file, ]
 
-# get a wetland file
+# get a wetland file. The steps below might not work, alternatively load wet_cov.asc file from the scripts folder https://github.com/EcoCommons-Australia/educational_material/blob/main/SDMs_in_R/Scripts/wet_cov.asc
+
 # these steps take too long to run here, so we supply the wetland layer, steps are below
 # download an Australia wetland shapefile from here
 # https://ecat.ga.gov.au/geonetwork/srv/eng/catalog.search#/metadata/83135
