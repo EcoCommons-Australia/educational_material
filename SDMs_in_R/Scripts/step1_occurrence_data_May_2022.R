@@ -404,7 +404,7 @@ head(frogs)
 
 names(frogs)
 
-frogs2<-frogs[,c(1,3:6,11)]
+frogs2<-frogs[,c(1,3:6,10)]
 
 head(frogs2)
 
