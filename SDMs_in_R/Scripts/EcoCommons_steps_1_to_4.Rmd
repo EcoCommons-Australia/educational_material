@@ -1,0 +1,1973 @@
+---
+title: "EcoCommons running SDMs in R workshop"
+author: "EcoCommons Platform, drafted by Rob Clemens formatted by Belinda Wilson"
+date: "2 December 2022"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+    theme: cerulean
+    highlight: pygments
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval=FALSE)
+```
+
+[EcoCommons Australia 2022. EcoCommons Australia – the platform of choice for ecological and environmental modelling, EcoCommons, Griffith University, Nathan, Queensland. Accessed Month D, YYYY](https://doi.org/10.47486/PL108).
+
+The script and data in this file draws on several sources, including:
+ 
+  1. The ATLAS of Living Australia (ALA), script modified from script written by Jenna Wraith, ALA Training and Outreach Coordinator
+      a) [Stevenson M, Westgate M, Newman P (2022). *galah: Atlas of Living Australia (ALA) Data and Resources in R*. R package version 1.3.1](https://CRAN.R-project.org/package=galah>)
+      b) See for vingnettes on how to use the [package](https://atlasoflivingaustralia.github.io/galah/)
+
+  2. [Global Biodiversity Information Facility (GBIF)](https://www.r-bloggers.com/2021/03/downloading-and-cleaning-gbif-data-with-r/)
+      - [Chamberlain S, Barve V, Mcglinn D, Oldoni D, Desmet P, Geffert L, Ram K (2022). rgbif: Interface to the Global Biodiversity Information Facility API. R package version 3.6.0](https://CRAN.R-project.org/package=rgbif)
+
+# Occurrence data
+
+Here we will set up your workspace, download and clean occurrence data.
+
+## Setting up your workspace
+
+First, if you are new to using R, we strongly suggest you visit this website and fo through that material before trying [this](https://datacarpentry.org/R-ecology-lesson/). 
+
+You should be able to run all this code in EcoCommons' coding cloud using either a jupyter notebook (R Kernal) or by importing this notebook into R studio as an [R Markdown](https://rmarkdown.rstudio.com/docs/reference/convert_ipynb.html).
+
+Let's start by installing and loading the following packages (need to install and load the package `pacman` first!):
+
+```{r}
+pacman::p_load(galah, rgbif, maps, tidyr, jpeg, raster, rgeos, sp, knitr, rmarkdown)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) #sets your working directory to the location your scrip or markdown is saved in
+
+direct <- "/Users/s2992269/Documents/Use_cases"
+folder <- "/SDM_in_R"
+knitr::opts_knit$set(root.dir=paste0(direct, folder))
+```
+
+Create a variety of folders in your working directory, if statement ignores this if the folder exists already.
+
+```{r}
+raw_data_folder <- paste0(getwd(),"/raw_data")
+ if (!file.exists(raw_data_folder)) {dir.create(raw_data_folder)}
+
+data_folder   <- paste0(getwd(),"/data")
+ if (!file.exists(data_folder)) {dir.create(data_folder)}
+
+results_folder <- paste0(getwd(),"/results")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+   
+results_folder <- paste0(getwd(),"/results1")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+  
+results_folder <- paste0(getwd(),"/results2")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+  
+results_folder <- paste0(getwd(),"/results3")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+   
+results_folder <- paste0(getwd(),"/results4")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+   
+results_folder <- paste0(getwd(),"/results_brt")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+   
+results_folder <- paste0(getwd(),"/results_glm")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+  
+results_folder <- paste0(getwd(),"/results_gam")
+ if (!file.exists(results_folder)) {dir.create(results_folder)}
+   
+scripts_folder <- paste0(getwd(),"/scripts")
+  if (!file.exists(scripts_folder)) {dir.create(scripts_folder)}
+
+raw_data_folder <- paste0(getwd(),"/predictors")
+ if (!file.exists(raw_data_folder)) {dir.create(raw_data_folder)}
+
+raw_data_folder <- paste0(getwd(),"/predictors_future")
+ if (!file.exists(raw_data_folder)) {dir.create(raw_data_folder)}
+```
+
+Set galah_config by adding your email. galah_config(email="your-email@email.com")  This email needs to be registered with ALA. You can register [here](https://auth.ala.org.au/userdetails/registration/createAccount).
+
+```{r}
+galah_config(email="?@gmail.com") #again put your email in here
+```
+
+Select an ATLAS. These configuration options will only be saved for this session. Set `preserve=TRUE` to preserve them for future sessions.
+
+```{r}
+show_all_atlases() #we will be using the Australian ATLAS data
+galah_config(atlas="Australia")
+show_all_fields() #show all the fields or columns of data within in the ALA
+```
+
+Find the kinds of data in each field replace the field name of interest in quotes.
+
+```{r}
+search_fields("australian states and territories")
+search_fields("coordinateUncertaintyinMeters")
+search_fields("occurrenceID")
+search_fields("cl22") #field values
+search_taxa("Amphibia")
+search_taxa(genus="Limnodynastes")
+search_taxa(species="Limnodynastes peroni")
+```
+
+Download some occurence data. The `galah_call` function starts a query, then `galah_identify` selects the taxa you are interested in, `galah_filter` selects records for specified columns and atlas_occurrences retrieves the specified occurrence records. Look for records submitted by FrogID:
+
+```{r}
+search_field_values("datasetName") #note you can see more rows, click lower right below
+```
+
+First check the number of records your query will return, there are 67,000+ records in ALA.
+
+```{r}
+galah_call() %>%
+ galah_identify("Limnodynastes peroni") %>%
+ atlas_counts()
+```
+
+Then filter those records so only those records from "FrogID" are returned for this species and remove records with a coordinate uncertainty greater than 100m, there are 36,000+ records from the FrogID dataset, and with only coordinates < 100m precision.
+
+```{r}
+galah_call() %>%
+ galah_identify("Limnodynastes peroni") %>%
+ galah_filter(datasetName == "FrogID") %>%
+ galah_filter(stateProvince == "Queensland") %>%
+ galah_filter(coordinateUncertaintyInMeters < 100) %>%
+ atlas_counts()
+```
+
+Select the occurrence records, `galah_select` returns wanted columns. We could also filter by year, but FrogID data is all pretty recent. Often you will want to ensure you are not including really old records in your data (i.e., `galah_filter(year >= 2020)`).
+
+```{r}
+LiPe <- galah_call() %>%
+ galah_identify("Limnodynastes peroni") %>%
+ galah_filter(datasetName == "FrogID") %>%
+ galah_filter(coordinateUncertaintyInMeters < 100) %>%
+ galah_filter(stateProvince == "Queensland") %>%
+ atlas_occurrences()
+```
+
+Get familiar with data; this will return the column names or fields.
+
+```{r}
+head(LiPe)
+names(LiPe)
+write.csv(LiPe, "raw_data/Limnodynastes peroni.csv")
+summary(LiPe) #generate a summary of those data
+```
+
+Drop columns not needed in analyses. Note you will often want to filter on additional fields not shown here.
+
+```{r}
+LiPe <- LiPe[,c("decimalLatitude",
+                "decimalLongitude",
+                "eventDate",
+                "scientificName")]
+head(LiPe) #look at the top rows of the new dataset
+```
+
+This is the earliest date, 2017 is fairly recent, and we want to make sure our predictor variables are available for these years.
+
+```{r}
+min(LiPe$eventDate) #this is the earliest date, 2017 is fairly recent
+max(LiPe$eventDate) #this is the most recent date, 2020
+write.csv(LiPe, "data/Limnodynastes peroni.csv") save
+```
+
+Double check the directory within the chunks is correct, noting the directory outside the code chunks might be different (`getwd()`). Next, read in data and overwrite LiPe:
+
+```{r}
+LiPe <- read.csv(paste0(getwd(),"/data/Limnodynastes peroni.csv"))
+```
+
+FrogID records are pretty clean, but often when you map data you will see odd locations
+
+```{r}
+map("world", xlim=range(LiPe$decimalLongitude),
+  ylim=range(LiPe$decimalLatitude)) 
+points(LiPe[ , c("decimalLongitude", "decimalLatitude")], pch=".")
+```
+
+When you look at these records mapped, you can see that most records are concentrated where people are near the bigger cities of eastern Australiathis kind of sampling bias is common in Australian occurrence data. It takes so much more effort to sample in remote locations.
+
+There are a few things you can do to reduce the problem of bias, you can break up your study area into areas near cities, and more remote areas (we will not do that here).
+
+You can reduce the number of records close to one another. This reduces spatial autocorrelation, and is a good step for these kinds of records before we show how to do spatial - thinning (reducing how close records are together) we need a base raster layer
+
+In all the modelling we will show here, each environmental predictor needs to cover the same area (have the same extent), have grid cells that are the same size (same resolution), and use the same coordinate system to define a method for turning a spherical planet earth into a flat map (same coordinate system and map projection, i.e., Coordinate Reference System or CRS)
+
+A base layer is one with a CRS, extent and resolution that all other layers will be turned into. Generally it is a good idea to use the largest possible extent, i.e. you often get better predictions when you include the entire range of your species, and when you use the finest (smallest grid cells) possible. Smaller grid cells only help prediction when the values vary from one grid cell to the next grid cell. I recommed choosing the variable that is most closely related to the ecology of your species and has the smallest resolution (grid cell size). Which variable do you think will predict best where your species are found? 
+
+This is Enhanced Vegetation Index (EVI) which captures greenness index while correcting ndvi issues, from 2004 downloaded from the [EcoCommons site](https://api.data-ingester.app.ecocommons.org.au/api/data/34ab5ea6-650f-503f-9446-88d0ae9effe1/download/ndlc-2004-250m_trend-evi-mean.tif).
+
+```{r}
+EVI <- raster("raw_data/ndlc-2004-250m_trend-evi-mean.tif")
+plot(EVI)
+EVI
+
+LiPe_pts <- SpatialPoints(coords=cbind(LiPe$decimalLongitude, 
+                                       LiPe$decimalLatitude),
+                          CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")) )
+
+require(rgeos)
+LiPe_convH <- rgeos::gConvexHull(LiPe_pts)
+```
+
+Check if your convex hull looks correct by plotting [useful information on working with spatial data in R](https://cengel.github.io/R-spatial/intro.html).
+
+```{r}
+plot(EVI)
+lines(LiPe_convH)
+```
+
+Increase the size of your extent (study area to beyone the extent of your point data) our CRS is in decimal degrees so 1 degree ~ 111km larger.
+
+```{r}
+LiPe_extent <- rgeos::gBuffer(LiPe_convH, width=1)
+```
+
+Check if your convex hull or extent is now larger
+
+```{r}
+plot(EVI)
+lines(LiPe_extent)
+
+EVI_LiPe <- raster::crop(EVI,LiPe_extent)
+plot(EVI_LiPe)
+EVI_LiPe
+
+EVI_LiPe_mask <- raster::mask(EVI_LiPe,LiPe_extent)
+plot(EVI_LiPe_mask)
+```
+
+Create your reference raster, all other rasters will be set to this resolution, extent and CRS, dividing raster by itself sets all values to 1.
+
+```{r}
+base <- EVI_LiPe_mask/EVI_LiPe_mask
+crs(base) <- crs(EVI)
+plot(base)
+writeRaster(base,"data/base_LiPe.asc", overwrite=TRUE)
+```
+
+Run these lines if you are coming back to the script to load your base layer:
+
+```{r}
+require(raster)
+base <- raster("data/base_LiPe.asc")
+plot(base) #check that it looks correct
+```
+
+Spatially thin occurrence records so that only one record is selected randomly from within a Grid cell that is 4 times larger than "base". Aggregate reduce resolution (make grid cells larger) (factor=4) notice grid cells are now 4 times larger.
+
+```{r}
+large_base <- aggregate(base, fact=4)
+res(base)
+res(large_base)
+
+LiPe <- read.csv("data/Limnodynastes peroni.csv")
+LiPe_pts <- sp::SpatialPoints(coords=cbind(LiPe$decimalLongitude,
+                                           LiPe$decimalLatitude),
+                              CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")) )
+
+cell_no <- raster::extract(large_base,
+                           LiPe_pts,
+                           cellnumbers=TRUE)
+head(cell_no)
+
+LiPe_cells <- cbind(LiPe,cell_no)
+head(LiPe_cells)
+
+require(dplyr)
+LiPe_thinned <- LiPe_cells %>% 
+ group_by(cells) %>% 
+ slice_sample(n=1)
+length(LiPe_thinned$cells)
+```
+
+Plot to look at results and write results to file:
+
+```{r}
+LiPe_pts2 <- SpatialPoints(coords=cbind(LiPe_thinned$decimalLongitude,
+                                        LiPe_thinned$decimalLatitude),
+                           CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")))
+plot(base)
+points(LiPe_pts2,pch=20,cex=0.2)
+write.csv(LiPe_thinned,"data/LiPe_thinned.csv")
+```
+
+Download all FrogID survey records to capture survey effort, spatial sampling bias, and to zero-fill.
+
+```{r}
+galah_call() %>%
+ galah_identify("Amphibia") %>%
+ galah_filter(datasetName == "FrogID") %>%
+ galah_filter(coordinateUncertaintyInMeters < 100) %>%
+ galah_filter(stateProvince == "Queensland") %>%
+ galah_select("datasetName") %>%
+ atlas_counts()
+
+frogs <- galah_call() %>%
+ galah_identify("Amphibia") %>%
+ galah_filter(datasetName == "FrogID") %>%
+ galah_filter(coordinateUncertaintyInMeters < 100) %>%
+ galah_filter(stateProvince == "Queensland") %>%
+ galah_select(datasetName,occurrenceID) %>%
+ atlas_occurrences()
+
+head(frogs)
+length(frogs$occurrenceID)
+frogs$unique_visit <- paste0(frogs$decimalLatitude,
+                              frogs$decimalLongitude,
+                              frogs$eventDate)
+length(unique(frogs$unique_visit))
+length(unique(frogs$eventDate))
+frogs$visitID <- as.numeric(as.factor(frogs$unique_visit))
+length(unique(frogs$visitID))
+head(frogs$visitID, 100)
+head(frogs)
+names(frogs)
+frogs2 <- frogs[,c(1,3:6,11)]
+head(frogs2)
+getwd()
+write.csv(frogs2,"raw_data/FrogID_all_ALA_Mar2022.csv")
+
+require(dplyr)
+names(frogs2)
+```
+
+Richness on each visit:
+
+```{r}
+frogs3 <- frogs2 %>%
+ group_by(decimalLatitude, 
+          decimalLongitude, visitID) %>%
+ summarise(no_spp=length(unique(scientificName)))
+
+head(frogs3)
+length(frogs3$decimalLatitude)
+summary(frogs3$no_spp)
+```
+
+Calculate the number of visits to the same lat long location.
+
+```{r}
+frogs4 <- frogs3 %>%
+ group_by(decimalLatitude, decimalLongitude) %>%
+ summarise(no_visits=length(visitID))
+
+length(frogs4$decimalLatitude)
+summary(frogs4$no_visits)
+```
+
+Note there were 448 visits to one lat long location, but most locations only had one visit.
+
+```{r}
+require(sp)
+visits_pts <- SpatialPoints(coords=cbind(frogs4$decimalLongitude,
+                                         frogs4$decimalLatitude),
+                            CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")))
+```
+
+Whoops we need to include only those points within our study area:
+
+```{r}
+plot(base)
+points(visits_pts,pch=20,cex=0.2)
+```
+
+This creates a raster that totals the total number of visits at each lat/long location
+
+```{r}
+b1 <- rasterize(visits_pts, 
+                base, 
+                frogs4$no_visits, 
+                fun=sum, 
+                background=0)
+b1
+```
+
+This is one way to generate a bias file, simply make a layer where the value in each cell=the number of surveys done in that cell. Maxent will not work with values of zero in the bias file, so below we add 1 to each cell value in our study area (all values in base=1). 
+
+Here you can see that there are too few points to show up on a map. If unable to add the bias layer directly into Maxent (`args=c("biaslayer=bias")`) - this method does not work for me and unfortunately means that when using R it is not using the `FACTORBIASOUT` argument, but a work around is to account for bias within Maxent by using your bias grid to determine the probability of sampling that grid cell to generate your background. 
+
+Here most of the values in the grid are the same value of 1 which in our case means no sampling was done there. So in this example we have a number of sites with an increased probability of being selected as a background point in Maxent, but most of the study area has the same low probability of being selected as background (some people might choose to use this).
+
+```{r}
+numb_visits_bias <- b1+base
+```
+
+Below we highlight an alternative method to generate a bias grid. If we assume areas close to areas where surveys have been conducted are more likely to have been surveyed, so there is a general spatial sampling bias, we may want to identify those spatial locations where data was more likely to have come from. 
+
+You can do this kind of thing with a focal function (see **Step 2**), but furthe below we generate a smoothed spatial surface where the probability of an area being sampled is a function of distance and sampling intensity. Using a Kernel density function is one way to do this. 
+
+```{r}
+bb <- bbox(b1)
+visit_locations <- raster::extract(b1, visits_pts, 
+                                   cellnumbers=TRUE)
+```
+
+These are the points that only occur in the study area
+
+```{r}
+visit_locations2 <- as.data.frame(na.omit(visit_locations))
+cellID <- unique(visit_locations2$cells)
+xy_visits <- xyFromCell(b1,cell=cellID)
+
+lg <- c(bb[1,1],bb[1,2])
+lt <- c(bb[2,1],bb[2,2])
+coordss <- cbind(lg,lt)
+v_xy2 <- rbind(xy_visits,coordss)
+```
+
+For some of these functions kde2d, and xyFromCell I had to increase my local R-environ memory size. Open terminal > cd ~ touch .Renviron, open .Renviron > save the following as the first line of .Renviron: R_MAX_VSIZE=100Gb.
+
+```{r}
+require(MASS)
+dens <- kde2d(v_xy2[,1], v_xy2[,2], n=c(nrow(b1), ncol(b1)))
+b5 <- raster(dens)
+plot(b5)
+b6 <- projectRaster(b5,base)
+b7 <- mask(b6,base)
+plot(b7)
+writeRaster(b7,"data/Bias_LiPe_kd.asc",overwrite=TRUE)
+```
+
+Now lets clean up our global environment, and get rid some of these big files:
+
+```{r}
+rm(b5)
+rm(b6)
+rm(EVI)
+rm(EVI_LiPe)
+rm(EVI_LiPe_mask)
+rm(frogs2)
+rm(frogs3)
+rm(visit_locations)
+```
+
+## Zero filling
+
+To identify locations that were surveyed but where LiPe was not detected.
+
+The FrogID project attempts to identify all frog species that were heard during a period of sound recording. While there is a possibility that frogs were present but not detected it is correct to assume that if the target species was not recorded on a certain date and time at a specific lat/long the there was a zero detection. 
+
+You can then make some assumptions around the number of surveys needed to be sure there were no frogs detected, while understanding that the spatial resolution of the modelling you are doing may include many frog habitats some of which may not have been surveyed. Still this method of generating pseudo-absences is at least putting zeros in areas where surveys were done, but the species was not detected. 
+
+If you relax the assumptions further, then species for which counts are usually inclusive of all the species detected (like bird lists), those cells where 10 (the number of surveys will vary by species dataset etc) surveys have been done but which did not detect the target species can be assumed to have zero of that species.
+
+The raster layer we created and named b1 has the number of surveys at all the locations where frogs were surveyed. First, we are going to check how many cells have a value of 3 or higher. So is there enough data to produce pseudo-absence zeros if we assume that when three visits were done in a grid cell we should have identified our target species (here striped marsh frog). 
+
+In a perfect world we may have needed 10 surveys at each of the habitats within each of the grid cells in order to be certain that the frog is truly absent from this location. Here we have some evidence that the frog was not present, and we have the B1 raster which captures survey effort which is a useful covariate in occupancy modelling (something we won't go into here).
+
+Reclassify raster with number of surveys to 1 if more than 2 surveys were done, and zero otherwise
+
+```{r}
+m <- c(0, 2.9, 0, 2.9, 3247, 1)
+reclass <- matrix(m, ncol= 3, byrow=TRUE)
+rc <- reclassify(b1, reclass)
+```
+
+Since all values are 1 or zero and ones are where there were three or more visits, cellStats gives us the number of grid cells where FrogID surveys were conducted (9196) in our case. 
+
+```{r}
+visits_3or_more <- mask(rc,base)
+freq(visits_3or_more)
+```
+
+Create a vector of 1's of the same length as the `LiPe_pres`, then create a raster with a value of 1 for each gridcell where a `LiPe` was recorded.
+
+```{r}
+LiPe_pres <- rep(1,length(LiPe$decimalLatitude))
+LiPe_pres_raster <- rasterize(LiPe_pts,base,
+                              LiPe_pres, 
+                              fun=min, 
+                              background=0)
+LiPe_pres_raster2 <- mask(LiPe_pres_raster,base)
+```
+
+How many grid cells of the pre-thinned data had `LIPE` recorded in them?
+
+```{r}
+freq(LiPe_pres_raster2)
+```
+
+Confirm that your two raters are the same extent, CRS, resolution etc:
+
+```{r}
+compareRaster(LiPe_pres_raster2,
+              visits_3or_more,
+              extent=TRUE, 
+              rowcol=TRUE, 
+              crs=TRUE, 
+              res=TRUE, 
+              orig=TRUE,
+              rotation=TRUE, 
+              values=FALSE)
+```
+
+Note there are 3179 locations with a value of -1 indicating the number of locations where LiPe was the only species observed in that grid cell, while 5617 cells have a value of 1, these are cells where frogs other than LiPe were recorded and we will consider these zeros from here on. This is not enough zeros to use as a targeted background in Maxent (usually best to go with 10,000 background locations), but it is enough for most other methods that require zeros BRT, GLM etc.
+
+```{r}
+Zero_LiPe <- visits_3or_more - LiPe_pres_raster2
+freq(Zero_LiPe)
+```
+
+Reclassify so a zero raster has the value of 1 for all LiPe zeros, and NA or 0 for all other values:
+
+```{r}
+m <- c(-2, 0.1, 0, 0.1, 2, 1)
+reclass2 <- matrix(m, ncol= 3, byrow=TRUE)
+rc2 <- reclassify(Zero_LiPe, reclass2)
+Zero_LiPe2 <- mask(rc2,base)
+freq(Zero_LiPe2)
+```
+
+Extract the cell numbers from the 0 grid where the value ==1. These are the lat/lons for locations where at least three surveys were done, but zero LiPe were detected - these are our pseudo absences.
+
+```{r}
+cell_vals_0 <- Which(Zero_LiPe2 ==1,cells=TRUE)
+xy_zero_LiPe <- xyFromCell(Zero_LiPe2,
+                           cell=cell_vals_0)
+
+plot(base) #plot the absence locations
+points(xy_zero_LiPe, pch=20,cex=0.2)
+
+plot(base) #plot the presence locations
+points(LiPe[ , c("decimalLongitude", 
+                 "decimalLatitude")], pch=".")
+```
+
+We will use these pseudo absences for BRT and GLM later.
+
+```{r}
+LiPe_zeros <- as.data.frame(xy_zero_LiPe)
+colnames(LiPe_zeros) <- c("Long","Lat")
+LiPe_zeros$spp <- "Limnodynastes_peroni"
+LiPe_zeros$pres <- 0
+write.csv(LiPe_zeros,"data/LiPe_zero_locations_3vis.csv")
+writeRaster(Zero_LiPe2,"data/LiPe_absences1_3vis.asc",
+            overwrite=TRUE)
+zeros_3visit <- read.csv("data/LiPe_zero_locations_3vis.csv")
+```
+
+Reclassify raster with number of surveys to 1 if more than 1 surveys was done, and zero otherwise:
+
+```{r}
+m <- c(0, 0.9, 0, 0.9, 3247, 1)
+reclass3 <- matrix(m, ncol= 3, byrow= TRUE)
+rc3 <- reclassify(b1, reclass3)
+freq(rc3)
+```
+
+It is a good idea to check your work as you go. Plotting data, looking at freq are some ways to do this. Here we double check that the number of cells with values greater than 1 in our b1 raster match the number of 1's in the reclassification
+
+```{r}
+t1 <- as.data.frame(freq(b1))
+sum(t1$count)-t1[1,2]
+```
+
+Sure enough, freq of rc3 returns 29161 cells with a value of 1, and the sum of cell counts with values greater than 1 in the original b1 raster are also 29161.
+
+Why am I showing this? Because my first attempt at generating the rc3 raster did not have equal numbers using a different method, and a typo in my first reclassification call kept these numbers separate. It is just a good idea to always verify that what you think you did in your code do not have any errors.
+
+```{r}
+visits_1or_more <- mask(rc3,base)
+freq(visits_1or_more)
+```
+
+Confirm that your two raters are the same extent, CRS, resolution etc:
+
+```{r}
+compareRaster(LiPe_pres_raster2,
+              visits_1or_more,
+              extent=TRUE, 
+              rowcol=TRUE, 
+              crs=TRUE, 
+              res=TRUE, 
+              orig=TRUE,
+              rotation=TRUE, 
+              values=FALSE)
+```
+
+```{r}
+Zero_LiPe1visit <- visits_1or_more - LiPe_pres_raster2
+freq(Zero_LiPe1visit)
+```
+
+Here we have 22134 grid cells where another frog(s) was recorded but not our target spp. We only need 10,000 cells (usually) for a targeted background in Maxent, so we can afford to do some spatial thinning. (If we don't have close to 10,000 grid cells after spatial thinning, we will just use the kde bias layer).
+
+```{r}
+cell_vals_0_1 <- Which(Zero_LiPe1visit==1,cells=TRUE)
+
+xy_zero_LiPe_1vis <- as.data.frame(xyFromCell(Zero_LiPe2,
+                                              cell=cell_vals_0_1))
+
+colnames(xy_zero_LiPe_1vis) <- c("Long","Lat")
+xy_zero_LiPe_1vis$spp <- "Limnodynastes_peroni"
+xy_zero_LiPe_1vis$pres <- 0
+write.csv(xy_zero_LiPe_1vis,"data/LiPe_zero_locations_1vis.csv")
+
+LiPe_pts2 <- SpatialPoints(coords=cbind(xy_zero_LiPe_1vis$Long,
+                                        xy_zero_LiPe_1vis$Lat),
+                           CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")))
+
+cell_no2 <- as.data.frame(raster::extract(large_base,
+                                          LiPe_pts2,
+                                          cellnumbers=TRUE))
+head(cell_no2)
+```
+
+Notice here I did not need to use a subsequent colnames function.
+
+```{r}
+LiPe_cells2 <- as.data.frame(cbind(Long=xy_zero_LiPe_1vis$Long,
+                                   Lat=xy_zero_LiPe_1vis$Lat,
+                                   cell_no=cell_no2$cells))
+head(LiPe_cells2)
+
+require(dplyr)
+LiPe_zeros_thinned_1vis <- LiPe_cells2 %>% 
+ group_by(cell_no) %>% 
+ slice_sample(n=1)
+
+length(LiPe_zeros_thinned_1vis$cell_no)
+```
+
+Note this in this object there is still more, than 10,000 areas where frog surveys were done, but no LiPe were recorded. We might see how many cells we would have if there were two or more visits, and then thin that result, but we will try to use these and the points from the bias layer to fit our models. 
+
+There are trade-offs with every modelling decision, some are important for your result, some do not really impact the result. Your decisions on what is best for your model depends on your question, the available data, the ecology of your species, and an understanding of what has worked or is important according to the literature for your species and your kind of question.
+
+```{r}
+LiPe_zeros_thinned_1vis$spp <- "Limnodynastes_peroni"
+LiPe_zeros_thinned_1vis$pres <- 0
+head(LiPe_zeros_thinned_1vis)
+write.csv(LiPe_zeros_thinned_1vis,
+          "data/LiPe_zero_locations_thinned_1vis.csv")
+```
+
+Note if you just use head(LiPe_zeros_thinned_1vis), you won't see all the decimal points in Long and Lat, print.data.frame shows all the decimal
+
+```{r}
+print.data.frame(head(LiPe_zeros_thinned_1vis))
+```
+
+It is often a good idea to break your data into randomly selected training and testing data. Often you would randomly remove 20% or more of your data and withold that from the model building process. Once your model was finsihed using your training data, you would then test your model with this training data. 
+
+If you have very little data, bootstrapping can be used to see if removal of a small percentage of data repeatedly changes results. This gives you a good understanding of the confidence intervals around your results and can reduce the impact of outliers on your final result. Cross-validation requires more data. Ideally for cross-validation you break your data into 10 folds (subsets) and compare results between folds, or summarise variability between folds. Some people select folds spatially, with each fold an independent spatial block of data, but random folds seem to work just as well or better. 
+
+If you can afford to set aside 20% + of your data, withholding a test data set is good practice. Ideally, you will test your model with completely independent data.
+
+# Environmental data
+
+This is a soil wetness index from 2013 downloaded from the [EcoCommons site](https://api.data-ingester.app.ecocommons.org.au/api/data/69b045b3-29d1-5068-a5e6-f0783c68c1b8/download/awap_run26j_2013_ann-TempMin.tif).
+
+Simply enter the above url, download the file, and load it from the directory path you saved it - ideally you would match the time the layer was made to the time your occurrence data was collected, and you might average over the last ten years, but this is just an example of the kinds of data you can use the EcoCommons point-and-click environment does this for you when in the SDM workflow you can select to make all the variables the finest or coarsest resolution.
+
+```{r}
+AWAP1 <- raster("raw_data/awap_WRel1End.tif")
+plot(AWAP1)
+AWAP1
+base <- raster("data/base_LiPe.asc")
+crs(base) <- "+proj=longlat +datum=WGS84 +no_defs"
+```
+
+Reduce the resolution of this layer on soil wetness, and match the extent of base. Note there are a variety of ways to this. In some cases these decisions on how to reduce or increase resolution matter to the result. Often the defaults are fine. Know your data, and dig deeper into the methods underlying these functions try typing `??raster::projectRaster`.
+
+```{r}
+AWAP2  <- projectRaster(AWAP1,base)
+AWAP3 <- mask(AWAP2,base)
+plot(AWAP3)
+AWAP <- AWAP3
+```
+
+Now we want to be sure the name of the variable AWAP is the same in memory, and in a folder full of all predictors so we can predict our fitted model into the entire area possibly using other point occurrence data (independent data). Use `writeRaster()` to save files locally:
+
+```{r}
+writeRaster(AWAP,"predictors/AWAP.asc")
+writeRaster(AWAP,"predictors_future/AWAP.asc")
+```
+
+Lets now upload the Vegetation classification layer NVIS from [EcoCommons](https://api.data-ingester.app.ecocommons.org.au/api/data/ffcf7885-95e0-5873-8178-4a5ecc14123b/download/nvis-2020-90m_aus6_0e_mvg_amvg.tif).
+
+```{r}
+NVIS1 <- raster("raw_data/nvis-2020-90m_aus6_0e_mvg_amvg.tif")
+```
+
+Each grid cell value should correspond to one of these [categories](https://www.awe.gov.au/sites/default/files/env/pages/ba1d4b30-d46f-42f7-bec2-fac391f26072/files/mvsg60-sort-order.pdf).
+
+```{r}
+freq(NVIS1)
+freq(NVIS1,value=44)
+```
+
+[Habitat of frog](https://environment.des.qld.gov.au/wildlife/animals/a-z/striped-marsh-frog) - it is hard to see one of these classes being super helpful, class 44 freshwater did not return anything. If we did use it we need to be careful changing the resolution because these are categorical variables (use nearest neighbor when changing resolution). 
+
+Random useful tidbit: A handy function to clip points to a polygon
+
+```{r}
+clipped_points <- spatial_point_file[polygon_file, ]
+```
+
+to get a wetland file. The steps below might not work, alternatively load wet_cov.asc file from the [scripts folder](https://github.com/EcoCommons-Australia/educational_material/blob/main/SDMs_in_R/Scripts/wet_cov.asc)
+
+These steps take too long to run here, so we supply the wetland layer, steps are below download an Australia wetland shapefile from [here](https://ecat.ga.gov.au/geonetwork/srv/eng/catalog.search/metadata/83135), select 1 0.1 degree grid that covers Australia, read in Wetland polygones
+
+```{r}
+wetland <- st_read("SurfaceHydrologyPolygonsNational.gdb")
+```
+
+then turn polygons into raster. The argument getCover in the rasterize function calculates the area of each cell covered by wetland
+
+```{r}
+wet_cov <- rasterize(wetland,Point1_degree_grid,getCover=TRUE)
+```
+
+for this variable it would have made more sense to source a polygon layer of freshwater only wetland. Here we are simply going to download the wet_cov.asc:
+
+```{r}
+wet_cov <- raster("https://drive.google.com/file/d/1mUWoc7f8nuSw4cmdwsxiWwt5gdXVohOb/view?usp=sharing")
+```
+
+```{r}
+wetland1 <- raster('raw_data/wet_cov.asc')
+crs(wetland1) <- "+proj=longlat +datum=WGS84 +no_defs"
+wetland2  <- projectRaster(wetland1,base)
+wetland3 <- mask(wetland2,base)
+plot(wetland3)
+```
+
+Here we use the focal function (a neighborhood function) to transform each grid cell value to the sum of the central cell and all cells 5 cells away surrounding that central cell this is a surrogate of connectivity, isolated wetlands will have lower values.
+
+```{r}
+wetland_connectivity <- focal(wetland3, w=matrix(1, nrow=11, ncol=11),fun=sum,na.rm=TRUE)
+plot(wetland_connectivity)
+```
+
+Write rasters if needed:
+
+```{r}
+writeRaster(wetland_connectivity,
+            "predictors/wetland_connectivity.asc")
+writeRaster(wetland_connectivity,
+            "predictors_future/wetland_connectivity.asc")
+```
+
+Data comes in many formats, and uploading often requires different mehtods
+NetSDF files are increasingly common, below is a sript to bring in that file type
+
+First we load days of maximum temperature data with that subset of data having the varname="tmax"
+
+```{r}
+require(sf)
+require(ncdf4)
+require(rasterVis)
+require(raster)
+
+MXtemp <- brick("Terraclim_EY_NSW.nc", 
+                varname="tmax") #this NetCDF file includes many 
+MXtemp_mean <- mean(MXtemp) #if we just want one layer which is the mean of those daily totals
+```
+
+Days of maximum temperature data with that subset of data having the `varname="tmax"`.
+
+We will now download a vegetation greenness index from [EcoCommons](https://api.data-ingester.app.ecocommons.org.au/api/data/34ab5ea6-650f-503f-9446-88d0ae9effe1/download/ndlc-2004-250m_trend-evi-mean.tif).
+
+```{r}
+EVI1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/34ab5ea6-650f-503f-9446-88d0ae9effe1/download/ndlc-2004-250m_trend-evi-mean.tif")
+```
+
+Process it as previous layers:
+
+```{r}
+EVI2  <- projectRaster(EVI1,base)
+EVI3 <- mask(EVI2,base)
+plot(EVI3)
+EVI <- EVI3
+
+writeRaster(EVI,"predictors/EVI.asc")
+writeRaster(EVI,"predictors_future/EVI.asc")
+```
+
+Here we just show how to bring in current and future data from EcoCommons after looking at correlations between bioclim variables this one was dropped.
+
+```{r}
+Bioclim01_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/90317596-ddef-5666-91c5-9cbc25c24fbc/download/current_1976-2005_bioclim-01.tif")
+Bioclim01_2  <- projectRaster(Bioclim01_1,base)
+Bioclim01_3 <- mask(Bioclim01_2 ,base)
+plot(Bioclim01_3)
+Bioclim01 <- Bioclim01_3
+writeRaster(Bioclim01,"predictors/Bioclim01.asc")
+```
+
+We will not write the bioclim data to the predictions_future folder because we have separate future climate predictions we can use. We do not have future predictions for EVI or Wetlands so we are assuming those things will stay the same in the future, the names of the future variables need to be the same as the current time variable names in order for the predict function to work, so just be sure to keep the different variables with the same name in different folders.
+
+```{r}
+Bioclim05_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/cc081daa-f524-58c2-939e-166a2b2e79eb/download/current_1976-2005_bioclim-05.tif")
+Bioclim05_2  <- projectRaster(Bioclim05_1, base)
+Bioclim05_3 <- mask(Bioclim05_2, base)
+plot(Bioclim05_3)
+Bioclim05 <- Bioclim05_3
+writeRaster(Bioclim05,"predictors/Bioclim05.asc")
+```
+
+```{r}
+Bioclim06_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/476e4343-99f2-578e-b44a-951a55c6b7c2/download/current_1976-2005_bioclim-06.tif")
+Bioclim06_2  <- projectRaster(Bioclim06_1,base)
+Bioclim06_3 <- mask(Bioclim06_2,base)
+plot(Bioclim06_3)
+Bioclim06 <- Bioclim06_3
+writeRaster(Bioclim06,"predictors/Bioclim06.asc")
+```
+
+```{r}
+Bioclim12_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/b2d70413-6b74-5366-b5d5-82ed919ded93/download/current_1976-2005_bioclim-12.tif")
+Bioclim12_2  <- projectRaster(Bioclim12_1,base)
+Bioclim12_3 <- mask(Bioclim12_2,base)
+plot(Bioclim12_3)
+Bioclim12 <- Bioclim12_3
+writeRaster(Bioclim12,"predictors/Bioclim12.asc")
+
+rm(Bioclim05_1,
+   Bioclim05_2,
+   Bioclim05_3,
+   Bioclim06_1,
+   Bioclim06_2,
+   Bioclim06_3,
+   Bioclim12_1,
+   Bioclim12_2,
+   Bioclim12_3)
+```
+
+After looking at correlations between bioclim variables this one was dropped.
+
+```{r}
+Bioclim14_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/e64dfa1d-ece8-50e7-9ed1-d603bfb7a101/download/current_1976-2005_bioclim-14.tif")
+Bioclim14_2  <- projectRaster(Bioclim14_1,base)
+Bioclim14_3 <- mask(Bioclim14_2 ,base)
+plot(Bioclim14_3)
+Bioclim14 <- Bioclim14_3
+writeRaster(Bioclim14,"predictors/Bioclim14.asc")
+```
+
+Create a raster stack of current data, be careful not to include the future variables below in this stack (they have the same names)
+
+```{r}
+preds_current <- stack(AWAP,wetland_connectivity,EVI,Bioclim05,Bioclim06,Bioclim12)
+plot(preds_current)
+names(preds_current)
+preds_current2 <- setNames(preds_current,c("AWAP","wetland_connectivity",
+           "EVI","Bioclim05","Bioclim06","Bioclim12"))
+names(preds_current2)
+rm(preds_current)
+```
+
+Repeat with future climate data, from EcoCommons Australia, Climate Projection, SRESA1B based on INM-CM30, 30 arcsec (~1km) - 2085 after looking at correlations between bioclim variables this one was dropped.
+
+```{r}
+Bioclim01_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/4e5534eb-c743-52af-a9c3-d137df8ba8c1/download/SRESA1B_inm-cm30_2085_bioclim-01.tif")
+Bioclim01_2  <- projectRaster(Bioclim01_1,base)
+Bioclim01_3 <- mask(Bioclim01_2 ,base)
+plot(Bioclim01_3)
+Bioclim01 <- Bioclim01_3
+writeRaster(Bioclim01,"predictors_future/Bioclim01.asc")
+```
+
+```{r}
+Bioclim05_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/34fe63e3-4152-5406-96f7-dd67f54be5f5/download/SRESA1B_inm-cm30_2085_bioclim-05.tif")
+Bioclim05_2  <- projectRaster(Bioclim05_1,base)
+Bioclim05_3 <- mask(Bioclim05_2,base)
+plot(Bioclim05_3)
+Bioclim05 <- Bioclim05_3
+writeRaster(Bioclim05,"predictors_future/Bioclim05.asc")
+```
+
+```{r}
+Bioclim06_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/36cf3700-d238-511c-bb8b-bc3c3677309d/download/SRESA1B_inm-cm30_2085_bioclim-06.tif")
+Bioclim06_2  <- projectRaster(Bioclim06_1,base)
+Bioclim06_3 <- mask(Bioclim06_2,base)
+plot(Bioclim06_3)
+Bioclim06 <- Bioclim06_3
+writeRaster(Bioclim06,"predictors_future/Bioclim06.asc")
+```
+
+```{r}
+Bioclim12_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/449cee85-5f6a-5b25-aca8-0fd2838be09f/download/SRESA1B_inm-cm30_2085_bioclim-12.tif")
+Bioclim12_2  <- projectRaster(Bioclim12_1,base)
+Bioclim12_3 <- mask(Bioclim12_2,base)
+plot(Bioclim12_3)
+Bioclim12 <- Bioclim12_3
+writeRaster(Bioclim12,"predictors_future/Bioclim12.asc")
+```
+
+```{r}
+rm(Bioclim05_1,Bioclim05_2,Bioclim05_3,Bioclim06_1,Bioclim06_2,
+ Bioclim06_3,Bioclim12_1,Bioclim12_2,Bioclim12_3)
+```
+
+After looking at correlations between bioclim variables this one was dropped
+
+```{r}
+Bioclim14_1 <- raster("https://api.data-ingester.app.ecocommons.org.au/api/data/178ee1bc-0aa1-58a0-abaf-ff5e19fcf363/download/SRESA1B_inm-cm30_2085_bioclim-14.tif")
+Bioclim14_2  <- projectRaster(Bioclim14_1,base)
+Bioclim14_3 <- mask(Bioclim14_2 ,base)
+plot(Bioclim14_3)
+Bioclim14 <- Bioclim14_3
+writeRaster(Bioclim14,"predictors_future/Bioclim14.asc")
+```
+
+Again just be sure to run this in order so you are not getting current bioclim data mixed with the future data which has the same name
+
+```{r}
+preds_future <- stack(AWAP,
+                      wetland_connectivity,
+                      EVI,
+                      Bioclim05,
+                      Bioclim06,
+                      Bioclim12)
+names(preds_future)
+preds_future2 <- setNames(preds_current,
+                          c("AWAP",
+                            "wetland_connectivity",
+                            "EVI",
+                            "Bioclim05",
+                            "Bioclim06",
+                            "Bioclim12"))
+names(preds_future2)
+preds_current2
+rm(preds_future)
+```
+
+Here we will show you how to take a mean of many months of data if you have many months of data in one folder, perhaps you are exploring what a suitable niche looks like during a drought. You may then want climate like averages like precipitation, or average temperature during the drought months. 
+
+One way to do this if you have separate rasters fir each month in one folder.
+
+```{r}
+Raster_list <- list.files(pattern='.tif$', all.files=TRUE) #if there are 30 files of tifs from January, this creates a list of those files
+all_chl <- stack(raster_list) #reads files in, makes them into a raster stack
+mean_chl <- mean(all_chl)
+```
+
+This produces one raster where each cell value is the mean value of all the rasters that were in the that folder
+
+NETCDF files also are a common way for large volumes of data to be this is an example loop using Terraclimate data read NetCDF data file obtained from "TerraClimate" import netCDF file - data from TerraClimate python download. Download the file [here](https://drive.google.com/file/d/1d4aCrdwjWRgENFWqkOucwEZhyDsXpnSV/view?usp=sharing). 
+
+
+```{r}
+require(sf)
+require(ncdf4)
+require(rasterVis)
+require(raster)
+
+setwd("~/Documents/Use_cases/EY_frogs/data") #directory where this NETCDF file is stored
+MXtemp <- brick("Terraclim_EY_NSW.nc", varname="tmax")
+Mxtemp_mean <- mean(MXtemp)
+plot(Mxtemp_mean)
+
+writeRaster(Mxtemp_mean,"MXtemp_TERRA_Sydney_region.asc", 
+            overwrite=TRUE)
+
+Rain <- brick("Terraclim_EY_NSW.nc", varname="ppt")
+Rain_mean <- mean(Rain)
+plot(Rain_mean)
+writeRaster(Rain_mean,"Rain_TERRA_Sydney_region.asc", 
+            overwrite=TRUE)
+
+MNtemp <- brick("Terraclim_EY_NSW.nc", varname="tmin")
+MNtemp_mean <- mean(MNtemp)
+plot(MNtemp_mean)
+writeRaster(MNtemp_mean,"MNtemp_TERRA_Sydney_region.asc", 
+            overwrite=TRUE)
+
+Soil <- brick("Terraclim_EY_NSW.nc", varname="soil")
+Soil_mean <- mean(Soil)
+plot(Soil_mean)
+writeRaster(Soil_mean,"Soil_wetness_TERRA_Sydney_region.asc", 
+            overwrite=TRUE)
+crs(Soil_mean)
+```
+
+# Model fitting
+
+Fit a Maxent model and then fit a BRT model. Java will need to be installed in your local machine and the Maxent files will need to be in your local directory. Download Maxent from [here]( https://biodiversityinformatics.amnh.org/open_source/maxent/). Ensure these files are in your local directory: maxent.jar maxent.bat maxent.sh
+
+```{r}
+pacman::p_load(dismo, gbm, raster, sf, rJava, boot, jpeg, MASSExtra, mgcv)
+```
+
+Read occurrence data which was thinned for LiPe, and check if Maxent is in the folder
+
+```{r}
+LiPe_thinned <- read.csv("data/LiPe_thinned.csv", stringsAsFactors=FALSE)
+head(LiPe_thinned)
+```
+
+```{r}
+jar <- paste(system.file(package="dismo"),
+             "/java/maxent.jar", sep='') 
+if(file.exists(jar)) { cat("can continue, maxent is available")} 
+else{cat('cannot run this because maxent is not available')}
+```
+
+```{r}
+setwd("~/Documents/Use_cases/SDM_in_R/predictors")
+rast_lst <- list.files(pattern='.asc$', all.files=TRUE)
+rast_lst
+LiPe_predictors <- stack(rast_lst)
+crs(LiPe_predictors) <- "+proj=longlat +datum=WGS84 +no_defs"
+LiPe_predictors 
+```
+
+Earlier runs of this function indicated BioClim01 and BioClim14 were highly correlated with other variables, so they were dropped. With this set of variables we still see high correlations between BioClim 12, AWAP and BioClim 05. However, all correlation are below 0.80, and for the purposes of prediction these correlations are not too high for looking at comparisons of the importance of variables these correlations are still probably a bit high.
+
+```{r}
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+ usr <- par("usr"); on.exit(par(usr))
+ par(usr=c(0, 1, 0, 1))
+ r <- abs(cor(x, y, use="pairwise.complete.obs"))
+ txt <- format(c(r, 0.123456789), digits=digits)[1]
+ txt <- paste(prefix, txt, sep="")
+ if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+ text(0.5, 0.5, txt, cex=cex.cor * r)
+}
+rpoints <- randomPoints(LiPe_predictors,1000)
+samp <- extract(LiPe_predictors,rpoints)
+pairs(samp,lower.panel=panel.smooth,upper.panel=panel.cor)
+```
+
+```{r}
+x_LiPe <- LiPe_thinned$decimalLongitude
+y_LiPe <- LiPe_thinned$decimalLatitude
+xy_LiPe <- cbind(x_LiPe,y_LiPe)
+xy.sp_LiPe <- SpatialPoints(xy_LiPe)
+crs(xy.sp_LiPe) <- crs(LiPe_predictors)
+crs(xy.sp_LiPe)
+
+plot(LiPe_predictors[[1]])
+points(xy.sp_LiPe,pch=20,cex=0.2)
+
+mask_r <- LiPe_predictors[[2]]
+ext <- raster::extent(LiPe_predictors)
+```
+
+Might not need this step
+
+```{r}
+setwd("~/Documents/Use_cases/Marine/Yellowtail_R")
+output_file <- paste0(getwd(), "/output")
+if (!file.exists(output_file)) {
+ dir.create(output_file)}
+
+maxent_args <- c('removeduplicates=TRUE',
+                 'jackknife=TRUE','replicates=3',
+                 'replicatetype=crossvalidate',
+                 'replicatetype=crossvalidate',
+                 'betamultiplier=1',
+                 'responsecurves=TRUE', 
+                 'pictures=TRUE','plots=TRUE',
+                 'defaultprevalence=0.5',
+                 'outputformat=raw')
+
+maxent_args <- c('removeduplicates=TRUE',
+                 'jackknife=TRUE',
+                 'responsecurves=TRUE', 
+                 'outputformat=cloglog',
+                 'plots=TRUE',
+                 'outputgrids=TRUE',
+                 'applythresholdrule=Maximum training sensitivity plus specificity')
+```
+
+We then choose which arguments we want to use, there are many scientific publications that look at which arguments to use when a good place to start to understand what Maxent is doing can be found [here](https://biodiversityinformatics.amnh.org/open_source/maxent/Maxent_tutorial2017.pdf), and this is an [excellent overview of the process and the things to consider](https://doi.org/10.1111/ecog.04960). 
+
+How you fit your model depends on your question and your data:
+ 1. Remove duplicates is good to make sure is true, just in case, but our thinning step should have removed all duplicates. 
+ 2. Jackknife gives an indication of how much each variable contributes to the results. 
+ 3. Cloglog format is usually what gives optimal predicted values * 
+  a. [outputformat=cloglog](https://www.researchgate.net/figure/Comparison-of-logistic-and-cloglog-transforms-of-Maxent-output-For-simplicity-no_fig2_315501215)
+  b. * plots=TRUE gives a variety of plots in the output (results1) folder
+
+A complete list of args that can be used can be found below. This is an argument that is explored alot in the literature *'betamultiplier=1', multiply all automatic regularization parameters by this number. A higher number gives a more spread-out distribution.
+
+```{r}
+maxent_args <- c('removeduplicates=TRUE',
+                 'jackknife=TRUE',
+                 'responsecurves=TRUE',
+                 'plots=TRUE')
+```
+
+This is the model fitting function, and path can be tricky, but when set correctly you get many results written to this folder
+
+```{r}
+Mod1_LiPe <- dismo::maxent(LiPe_predictors, 
+                           xy.sp_LiPe, 
+                           path="results", 
+                           args= maxent_args)
+```
+
+If you open up the results 1 folder and click on "maxent.html" - a webpage should open up showing some results.
+
+The ROC curve and AUC score < 0.9 suggests we are not predicting our training super accurately - if the goal of this exercise is prediction I would probably stop here and make sure My occurrence data is accurate, and think about what other variables might help us predict the presence of this species. Also, I would run the model multiple times.
+
+Machine / stochatic learning algorithms often result in different results each time. It is a good idea to run the model multiple times to get a sense of the variation. We might get better predictions with a wetland layer that only included freshwater wetland, perhaps averaging AWAP soil wetness layers over a decade would help? Perhaps there is a national layer that captures small wetlands better?
+
+Jackknife results, and variable importance do not indicate in my results that EVI is a good predictor, so we might look to drop that one from future models. Note those Jackknife results and variable response plots are also in the plots folder in the results folder. Try deleting the results in results1 folder, and running the model again, Are results exactly the same? WHY NOT?
+
+Now lets predict a gridcell value for each cell in our extent
+
+```{r}
+map_predictions <- predict(Mod1_LiPe, LiPe_predictors,args=maxent_args)
+plot(map_predictions)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+If you want to save a jpg of the mapped predictions use the code below
+
+```{r}
+require("jpeg")
+setwd("~/Documents/Use_cases/SDM_in_R") #check your working direction with getwd()
+jpeg(paste0(getwd(),"/results/LiPe_predicted.jpeg"))
+plot(map_predictions)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+dev.off()
+```
+
+This threshold maximises the cases where the model incorrectly assigns unsuitable habitat (true negative) and misses suitable habitat (false positive). Keep in mind how you set your threshold will depend on your use of the resulting map, or your question.
+
+```{r}
+results1 <- read.csv("results/maxentResults.csv")
+thresh <- results1$Maximum.training.sensitivity.plus.specificity.area
+thresh
+
+m <- c(0, thresh, 0, thresh, 1, 1)
+reclass <- matrix(m, ncol= 3, byrow= TRUE)
+rc <- reclassify(map_predictions, reclass)
+
+plot(rc)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+What if someone gave us $1million to buy some LiPe habitat? We might want to be really sure the species is present, if that is the case we might want to find a model with AUC > 0.9, but just to illustrate the result lets try a much higher threshold.
+
+First we want to rescale the data so values run between 0 and 1, then select a threshold of 0.8. There are many reasons and ways to set thresholds, this is just one example of selecting a more conservative threshold that identifies locations where we are relatively more sure are suitable.
+
+```{r}
+min.R <- cellStats(map_predictions,"min")
+max.R <- cellStats(map_predictions,"max")
+
+map_predictions2 <- ((map_predictions - min.R) / 
+                       (max.R - min.R) - 0 ) * 1 
+thresh2 <- 0.8
+
+m2 <- c(0, thresh2, 0, thresh2, 1, 1)
+reclass2 <- matrix(m2, ncol= 3, byrow= TRUE)
+rc2 <- reclassify(map_predictions2, reclass2)
+
+plot(rc2)
+```
+
+There are far fewer locations where we are pretty sure someone will find LiPe, and what if our original model is not that good, how can we assess this? Now we are going to explore how consistent results are with a three fold-cross validation:
+
+  - 3-folds or replicates=3
+
+When using cross validation as the replicate type:
+  - * replicatetype=crossvalidate
+  - * replicates=3
+
+```{r}
+maxent_args2 <- c('removeduplicates=TRUE',
+                  'jackknife=TRUE',
+                  'responsecurves=TRUE', 
+                  'outputformat=cloglog',
+                  'plots=TRUE',
+                  'replicatetype=crossvalidate',
+                  'replicates=3')
+```
+
+This is the model fitting function, and path can be tricky, but when set correctly you get many results written to this folder.
+
+```{r}
+Mod2_LiPe <- dismo::maxent(LiPe_predictors, xy.sp_LiPe, path="results2", args= maxent_args2)
+```
+
+Notice that in the folder results2 the differences between the three models (maxent_0.html, maxent_2.html, maxent_2.html) are very similar (likely due to large numer of occurrence records). What other way could you compare the performance of these three models, and how?
+
+Now let briefly explore how to account for sampling bias:
+
+```{r}
+bias_raster <- raster("data/Bias_LiPe_kd.asc")
+crs(bias_raster) <- "+proj=longlat +datum=WGS84 +no_defs" #always double check you have defined the CRS correctly
+plot(bias_raster) #and a good idea to double check that it looks like it should
+```
+
+```{r}
+bg <- xyFromCell(bias_raster, sample(which(!is.na(values(bias_raster))), 
+                                     10000,
+                              prob=values(bias_raster)[!is.na(values(bias_raster))]))
+```
+
+```{r}
+args=c('biasfile=bias_raster')
+```
+
+Some documentation indicates that you could use this argument to allow Maxent to correct for bias (looks like a different method though) I could not get this argument to work though.
+
+```{r}
+maxent_args <- c('removeduplicates=TRUE',
+                 'jackknife=TRUE',
+                 'responsecurves=TRUE',
+                 'outputformat=cloglog',
+                 'plots=TRUE')
+Mod3_LiPe <- dismo::maxent(x=LiPe_predictors, 
+                           p=xy.sp_LiPe,a=bg, 
+                           path="results3", 
+                           args= maxent_args)
+
+map_predictions3 <- predict(Mod3_LiPe, LiPe_predictors)
+
+plot(map_predictions3)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+Compare these results, what else might we do to compare results between models? There are some pretty big changes, and the model fitting does not give as high an AUC, Why? 
+What if we had not used thinned data? Would the AUC have been higher? Why? Now lets try using targeted background points:
+
+```{r}
+LiPe_zeros_thinned_1vis
+LiPe_thinned
+zeros_1visit <- read.csv("data/LiPe_zero_locations_thinned_1vis.csv")
+```
+
+These are the locations where we assume there were no LiPe in that cell because at least one.
+
+```{r}
+x_bk2 <- zeros_1visit$Long
+y_bk2 <- zeros_1visit$Lat
+xy_bk2 <- cbind(x_bk2,y_bk2)
+xy.sp_bk2 <- SpatialPoints(xy_bk2)
+crs(xy.sp_bk2) <- crs(LiPe_predictors)
+crs(xy.sp_bk2)
+
+plot(LiPe_predictors[[2]])
+points(xy.sp_bk2,pch=20,cex=0.2)
+```
+
+Notice there has been alot of inland locations where frogs were surveyed for, but which did not record `LiPe.`
+
+```{r}
+maxent_args <- c('removeduplicates=TRUE',
+                 'jackknife=TRUE',
+                 'responsecurves=TRUE', 
+                 'outputformat=cloglog',
+                 'plots=TRUE')
+
+Mod4_LiPe <- dismo::maxent(x=LiPe_predictors, 
+                           p=xy.sp_LiPe, 
+                           a=xy.sp_bk2, 
+                           path="results4",
+                           args= maxent_args)
+
+map_predictions4 <- predict(Mod4_LiPe, LiPe_predictors)
+
+plot(map_predictions4)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+Notice our AUC values have fallen again and while the response curves look similar, variable importance has shifted. There is a clear difference between the overall background, and a targeted background that only uses environmental variables where someone has done a frog survey should we consider excluding desert areas, where LiPe is not observed from our study area, or extent? Will we get more realistic estimates of model performance, and of the subtle differences between the areas LiPe occurs and where is does not if we focus our extent to only occur areas where they might occur. 
+
+The map does not look radically different to the map predictions from model 1, but the low AUC is highligting how the it is hard to distinguish between presence locations and nearby locations where LiPe was not observed. This is due to the high spatial autocorrelation in our predictor values and in our sampling effort. This is a better AUC, and indicates there is much work to do to predict well.
+
+What if we predict our current model into the future?
+
+```{r}
+setwd("~/Documents/Use_cases/SDM_in_R/predictors_future")
+rast_lst2 <- list.files(pattern='.asc$', all.files=TRUE)
+rast_lst2
+LiPe_predictors_future <- stack(rast_lst2)
+crs(LiPe_predictors_future) <- "+proj=longlat +datum=WGS84 +no_defs"
+LiPe_predictors_future
+
+map_predictions5 <- predict(Mod4_LiPe, LiPe_predictors_future)
+
+plot(map_predictions5)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+Any differences expected in the future map (slight difference with retraction away from inland and northern areas, possible suitability increase at higher elevations.
+
+How confident are we? Was it a problem that we used one source of climate model to represent current climate and another source to represent future climate?
+
+Now we will fit a **Boosted Regression Tree** (BRT) model, which is essentially a **generalized boosting model** (gbm).
+
+First, lets add our data where no LiPe were found on three visits:
+
+```{r}
+LiPe_zero_3vis <- read.csv("data/LiPe_zero_locations_3vis.csv")
+head(LiPe_zero_3vis)
+LiPe_zero_3vis$X <- NULL
+LiPe_zero_3vis$spp <- NULL
+head(LiPe_zero_3vis)
+LiPe_thin <- as.data.frame(cbind(Long=LiPe_thinned$decimalLongitude, Lat=LiPe_thinned$decimalLatitude, pres=LiPe_thinned$layer))
+LiPe_thin2 <- LiPe_thin[complete.cases(LiPe_thin), ]
+head(LiPe_thin2)
+LiPe_p_a <- rbind(LiPe_zero_3vis,LiPe_thin2)
+
+x_pa <- LiPe_p_a$Long
+y_pa <- LiPe_p_a$Lat
+xy_pa <- cbind(x_pa,y_pa)
+xy.sp_pa <- SpatialPoints(xy_pa)
+crs(xy.sp_pa) <- crs(LiPe_predictors)
+crs(xy.sp_pa)
+
+LiPe_preds <- extract(LiPe_predictors,xy.sp_pa)
+LiPe_preds2 <- cbind(LiPe_p_a,LiPe_preds)
+LiPe_preds3 <- as.data.frame(LiPe_preds2[complete.cases(LiPe_preds2), ])
+summary(LiPe_preds3)
+names(LiPe_preds3)
+```
+
+Note in `gbm.step` you specify the column index location, so pres is indexed as 3 in names.
+
+These models use stochastic learning, so you can expect a different answer each time unless you set the random seed, or make them deterministic by setting bag fraction to 1.
+
+```{r}
+LiPe_mod5_brt <- gbm.step(data=LiPe_preds3, 
+       gbm.x=c(4:9), 
+       gbm.y=3, 
+       family="bernoulli", 
+       tree.complexity=3, 
+       learning.rate=0.01, 
+       bag.fraction=0.75)
+```
+
+Notice the plot that is produced automatically that shows the drop in holdout deviance as the number of trees increases, we are looking to explain more deviance with each tree.
+
+Ideally this curve would not decrease quickly at the start, there would be gentler curve. Steep drops early in the model are often less stable models. Reducing the learning rate from 0.01 to 0.003 might lessen the drop, but this one is not too bad, and it would take much longer to run if we slow the learning rate down.
+
+Elith et al. provides general guidelines on where to start, and suggests a variety of ways to select optimal settings. Keep in mind a tree complexity of 3 suggests you suspect that three way interactions make sense ecologically. Perhaps the suitability of frog ponds relates to how hot it has been, what the soil moisture was like and how much rain occurred?
+
+Also, simply running this model again, and comparing results will give you some indication of how stable your model is there are alot of interesting things stored in the model object, and you can browse through them.
+
+This shows all the other default settings as well as those specified in the call:
+
+```{r}
+names(LiPe_mod5_brt)
+LiPe_mod5_brt$gbm.call
+```
+
+Lets predict and plot results, this step takes a couple hours. This predict function will use the n.trees=to the best trees number found in the original model check it using:
+
+```{r}
+pred_map_brt <- predict(LiPe_predictors,LiPe_mod5_brt,type="response")
+LiPe_mod5_brt$gbm.call$best.trees
+```
+
+3000 trees will be used, you can choose another value if you have a good reason too.
+
+```{r}
+require("jpeg")
+setwd("~/Documents/Use_cases/SDM_in_R")
+jpeg(paste0(getwd(),"/results_brt/LiPe_brt_predicted.jpeg"))
+plot(pred_map_brt)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+dev.off()
+
+writeRaster(pred_map_brt, "results_brt/LiPe_brt_predicted.asc")
+```
+
+There are alot more options to explore with [BRT](https://rspatial.org/raster/sdm/9_sdm_brt.html) curious what a function does (i.e., run `??gbm.plot`).
+
+```{r}
+jpeg(paste0(getwd(),"/results_brt/LiPe_brt_var_response_curves.jpeg"))
+gbm.plot(LiPe_mod5_brt,rug=TRUE) #generates response curves
+dev.off()
+
+gbm.plot.fits(LiPe_mod5_brt)
+gbm.interactions(LiPe_mod5_brt)
+
+BRT_var_import <- as.data.frame(LiPe_mod5_brt$contributions)
+write.csv(BRT_var_import,"results_brt/LiPe_brt_var_importance.csv")
+```
+
+`var importance` suggests two variables don't add much, lets look at possibly dropping those two:
+
+```{r}
+brt_drops <- gbm.simplify(LiPe_mod5_brt, n.drops=4)
+```
+
+If we look at the graph produced by gbm.simplify we can see a red verticle line at 2 variables removed 
+
+gbm uses boosting to focus on improving fit (deviance) on each iteration, but if it is focussing on a variable that does not help, it actually increases deviance by having that extra predictor in the model.
+
+A better predictive model might result from dropping 1 or 2 variables.
+
+```{r}
+names(LiPe_preds3)[brt_drops$pred.list[[1]]]
+```
+
+Compare that to the full list used in the model:
+
+```{r}
+names(LiPe_preds3)[c(4:9)]
+```
+
+Not surprisingly this indicates that the variable EVI which contributes least can be dropped, Ecologically it might be a stretch to think that wetlands for frogs will be related to how green vegetation is in an area, so it might make sense to drop it.
+
+Note few people worry about this step, but ecologists like simpler models, and keeping EVI actually increases predictive deviance, so dropping makes sense.
+
+```{r}
+names(LiPe_preds3)[brt_drops$pred.list[[2]]]
+```
+
+If we were to drop two variables it would be EVI and wetland connectivity. We know wetland connectivity includes salty wetlands which are no good for frogs and the layer does not include most of the small wetlands used by frogs, so ecologically might make sense to drop it, and a slight increase in predictive deviance when included. Given my objective is to maximise predictions, I would drop both.
+
+A short cut for running another model with those two variables dropped is below, notice the diffent way to call `gbm.x`.
+
+```{r}
+LiPe_mod6_brt <- gbm.step(data=LiPe_preds3, 
+       gbm.x=brt_drops$pred.list[[2]], 
+       gbm.y=3, family="bernoulli", 
+       tree.complexity=3, 
+       learning.rate=0.01, 
+       bag.fraction=0.75)
+```
+
+Other plotting methods, evaluation, bootstrapping or ways to optimise the selection of the number of trees can be found [here](https://rspatial.org/raster/sdm/9_sdm_brt.html). 
+
+Elith J, Leathwick J R, & Hastie T (2008). Boosted regression trees - a new technique for modelling ecological data. *Journal of Animal Ecology*.
+
+Now we will very quickly fit a GLM from the package `MASSExtra`:
+
+```{r}
+glm1 <- glm(pres ~ AWAP + Bioclim05 + Bioclim06 + Bioclim12 + EVI+ wetland_connectivity, family=binomial, data=LiPe_preds3)
+
+glm1
+summary(glm1)
+```
+
+This is a great new function which simplifies variable selection (remember the days of forward, backward) stepAIC is often good, stepBIC uses a different metric.
+
+```{r}
+glm1a <- step_BIC(glm1)
+```
+
+This suggests our best model includes AWAP, Bioclim 05, and Bioclim06. 
+
+Check residual plots, interpretation of residual plots for binomial family is different to other residual plot diagnostics, hear there appears to be little violation of linearity, and there are some influencial data outliers from `library(boot)`.
+
+```{r}
+model_diags <- glm.diag(glm1a) #residual diagnostics
+glm.diag.plots(glm1a,model_diags)
+```
+
+Lets see how the predictions look:
+
+```{r}
+names(LiPe_predictors)
+LiPe_preds_subset <- LiPe_predictors[[which(c(TRUE,TRUE,
+                                              TRUE,FALSE,
+                                              FALSE,FALSE))]]
+
+glm_pred <- predict(LiPe_preds_subset,glm1a,type="response")
+setwd("~/Documents/Use_cases/SDM_in_R")
+```
+
+Mke sure your current directory is your working directory, use `getwd()` to ensure you have asigned the directory correctly.
+
+```{r}
+jpeg(paste0(getwd(),"/results_glm/LiPe_glm_predicted.jpeg"))
+plot(glm_pred)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+dev.off()
+```
+
+Finally we will git a GAM from the `mgcv` package. A `cr spline` is defined by having knots spread throughout the co-variate values and which the amount of smooting is optimised, so it can become less wiggly.
+
+```{r}
+gam1 <- gam(pres ~ s(AWAP, bs="cr") + 
+              s(Bioclim05, bs="cr") + 
+              s(Bioclim06,bs="cr"), 
+            family=binomial, data=LiPe_preds3)
+gam.check(gam1)
+```
+
+If we compare AIC values it looks like the GAM picks up some important non-linear relationships and is better than a GLM for this variable set anyway. BIC also suggests gam1 is better than either glm model:
+
+```{r}
+AIC(glm1a)
+AIC(gam1)
+plot(gam1)
+gam_pred <- predict(LiPe_preds_subset,gam1,type="response")
+setwd("~/Documents/Use_cases/SDM_in_R")
+```
+
+Make sure your current directory is your working directory. Generate a jpeg map of the GAM predictions:
+
+```{r}
+jpeg(paste0(getwd(),"/results_gam/LiPe_glm_predicted.jpeg"))
+plot(gam_pred)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+dev.off()
+```
+
+List of Maxent args (begin call with `maxent_args <- c(`):
+
+  1. **Duplicate records**
+    - `removeduplicates=TRUE`, remove duplicate presence records. If environmental data are in grids, duplicates are records in the same grid cell, otherwise, duplicates are records with identical coordinates.
+     - `maximumbackground=10000`, if the number of background points/grid cells is larger than this number, then this number of cells is chosen randomly for background points.
+     
+  2. **Background records**
+     - `maximumbackground=10000`, if the number of background points/grid cells is larger than this number, then this number of cells is chosen randomly for background points.
+     - `addsamplestobackground=TRUE`, add to the background any sample for which has a combination of environmental values that isn`t already present in the background
+     
+  3. **Missing data**
+     - `allowpartialdata=FALSE`, during model training, allow use of samples that have nodata values for one or more environmental variables
+    
+  4. **Variable importance**
+     - `jackknife=TRUE`, NB: default=FALSE; measure importance of each environmental variable by training with each environmental variable first omitted, then used in isolation.
+    
+  5. **Random seed**
+     - `randomseed=FALSE`, if selected, a different random seed will be used for each run, so a different random test/train partition will be made and a different random subset of the background will be used, if applicable.
+    
+  6. **Prevalence**
+     - `defaultprevalence=0.5`, default prevalence of the species: probability of presence at ordinary occurrence points. See Elith et al. Diversity and Distributions, 2011 for details.
+    
+  7. **Train/test settings**
+     - `randomtestpoints=0`, percentage of presence localities to be randomly set aside as test points, used to compute AUC, omission, etc.
+     - `replicates=1`, number of replicate runs to do when cross-validating, bootstrapping or doing sampling with replacement runs.
+    `replicatetype=crossvalidate`, if replicates > 1, do multiple runs of this type: 
+     - crossvalidate: samples divided into replicates fods; each fold in turn used for test data
+     - bootstrap: replicate sample sets chosen by sampling with replacement
+     - subsample: replicate sample sets chosen by removing random test percentage without replacement to be used for evaluation
+     - `maximumiterations=500`, stop training after this many iterations of the optimization algorithm
+     - `convergencethreshold=0.00001`, stop training when the drop in log loss per iteration drops below this number
+     
+  8. **Feature selection**
+     - `autofeature=TRUE`, automatically select which feature classes to use, based on number of training samples
+     - `linear=TRUE`, allow linear features to be used
+     - `quadratic=TRUE`, allow quadratic features to be used
+     - `product=TRUE`, allow product features to be used
+     - `threshold=TRUE`, allow threshold features to be used
+     - `hinge=TRUE`, allow hinge features to be used
+    
+  9. **Feature settings**
+     - `lq2lqptthreshold=80`, number of samples at which product and threshold features start being used
+     - `l2lqthreshold=10`, number of samples at which quadratic features start being used
+     - `hingethreshold=15`, number of samples at which hinge features start being used
+    
+  10. **Regularisation settings**
+      - `betamultiplier=1`, multiply all automatic regularization parameters by this number. A higher number gives a more spread-out distribution.
+      - `beta_threshold=-1`, regularization parameter to be applied to all threshold features; negative value enables automatic setting
+      - `beta_categorical=-1`, regularization parameter to be applied to all categorical features; negative value enables automatic setting
+      - `beta_lqp=-1`, regularization parameter to be applied to all linear, quadratic and product features; negative value enables automatic setting
+      - `beta_hinge=-1`, regularization parameter to be applied to all hinge features; negative value enables automatic setting
+    
+  11. **Outputs** - these are not shown in the UI, so unable to be changed by user
+      - `responsecurves=TRUE`, NB. default=FALSE; create graphs showing how predicted relative probability of occurrence depends on the value of each environmental variable
+      - `responsecurvesexponent=FALSE`, instead of showing the logistic value for the y axis in response curves, show the exponent (a linear combination of features).
+      - `pictures=TRUE`, create a .png image for each output grid
+      - `outputformat=raw`, representation of probabilities used in writing output grids, see Help for details
+      - `writeclampgrid=TRUE`, write a grid that shows the spatial distribution of clamping. At each point, the value is the absolute difference between prediction values with and without clamping.
+      - `writemess=TRUE`, a multidimensional environmental similarity surface (MESS) shows where novel climate conditions exist in the projection layers. The analysis shows both the degree of novelness and the variable that is most out of range at each point.
+      - `writeplotdata=FALSE`, write output files containing the data used to make response curves, for import into external plotting software.
+     - `outputgrids=TRUE`, write output grids. Turning this off when doing replicate runs causes only the summary grids (average, std, deviation, etc) to be written, not those for the individual runs.
+      - `plots=TRUE`, write various plots for inclusion in .html output
+      - `logfile=maxent.log`, file name to be used for writing debugging information about a run in output directory
+      - `applythresholdrule=Fixed cumulative value 1`, apply a threshold rule, generating a binary outputgrid in addition to the regular prediction grid. Use the full name of the threshold rule in Maxent's html output as the argument. For example, `applyThresholdRule=Fixed` cumulative value 1.
+      - `logscale=TRUE`, if selected, all pictures of models will use a logarithmic scale for color-coding
+      - `writebackgroundpredictions=FALSE`, write .csv file with predictions at background points
+      - `fadebyclamping=FALSE`, reduce prediction at each point in projections by the difference between clamped and non-clamped output at that point
+     
+  12. **Projection settings** - not shown in the UI, so unable to be changed by user data
+      - `extrapolate=TRUE`, predict to regions of environmental space outside the limits encountered during training
+      - `doclamp=TRUE` apply clamping when projecting
+
+# Model validation
+
+```{r}
+pacman::p_load(raster, rgdal, caret, dismo, gbm, raster, sp, jpeg, galah, tidyr)
+```
+
+```{r,echo=FALSE}
+setwd("~/Documents/Use_cases/SDM_in_R/predictors")
+rast_lst <- list.files(pattern='.asc$', all.files=TRUE)
+rast_lst
+LiPe_predictors <- stack(rast_lst)
+crs(LiPe_predictors) <- "+proj=longlat +datum=WGS84 +no_defs"
+LiPe_predictors 
+setwd(paste0(direct,folder))
+```
+
+```{r,echo=FALSE}
+LiPe_thinned <- read.csv("data/LiPe_thinned.csv", stringsAsFactors=FALSE)
+base <- raster("data/base_LiPe.asc")
+crs(base) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+x_LiPe <- LiPe_thinned$decimalLongitude
+y_LiPe <- LiPe_thinned$decimalLatitude
+xy_LiPe <- cbind(x_LiPe,y_LiPe)
+xy.sp_LiPe <- SpatialPoints(xy_LiPe)
+crs(xy.sp_LiPe) <- crs(base)
+crs(xy.sp_LiPe)
+```
+
+```{r,echo=FALSE}
+LiPe_zero_3vis <- read.csv("data/LiPe_zero_locations_3vis.csv")
+head(LiPe_zero_3vis)
+LiPe_zero_3vis$X <- NULL
+LiPe_zero_3vis$spp <- NULL
+head(LiPe_zero_3vis)
+LiPe_thin <- as.data.frame(cbind(Long=LiPe_thinned$decimalLongitude, Lat=LiPe_thinned$decimalLatitude, pres=LiPe_thinned$layer))
+LiPe_thin2 <- LiPe_thin[complete.cases(LiPe_thin), ]
+head(LiPe_thin2)
+LiPe_p_a <- rbind(LiPe_zero_3vis,LiPe_thin2)
+
+x_pa <- LiPe_p_a$Long
+y_pa <- LiPe_p_a$Lat
+xy_pa <- cbind(x_pa,y_pa)
+xy.sp_pa <- SpatialPoints(xy_pa)
+crs(xy.sp_pa) <- crs(LiPe_predictors)
+crs(xy.sp_pa)
+
+LiPe_preds <- raster::extract(LiPe_predictors,xy.sp_pa)
+LiPe_preds2 <- cbind(LiPe_p_a,LiPe_preds)
+LiPe_preds3 <- as.data.frame(LiPe_preds2[complete.cases(LiPe_preds2), ])
+summary(LiPe_preds3)
+names(LiPe_preds3)  #note in gbm.step you specify the column index location, so pres is indexed as 3 in names
+```
+
+There are many ways to evaluate your model. With statistical models you can evaluate residual plots to check that your model meets assumptions.
+
+It is often a good idea to break your data into randomly selected training and testing data. Often you would randomly remove 20% or more of your data and withold that from the model building process. Once your model was finsihed using your training data, you would then test your model with this training data. If you have very little data, bootstrapping can be used to see if removal of a small percentage of data repeatedly changes results. This gives you a good understanding of the confidence intervals around your results and can reduce the impact of outliers on your final result.
+
+Cross-validation requires more data. Ideally for cross-validation you break your data into 10 folds (subsets) and compare results between folds, or summarise variability between folds. If you can afford to set aside 20% + of your data, withholding a test dataset is good practice. Ideally, you will test your model with completely independent data.
+
+Here we evaluate the BRT model with the training data used to construct the model. First we run the BRT model again without additional variables identified in our simplify function.
+
+```{r}
+LiPe_mod_new <- gbm.step(data=LiPe_preds3, gbm.x=c(4:7), gbm.y=3, family="bernoulli", tree.complexity=3, learning.rate=0.01, bag.fraction=0.75)
+```
+
+```{r}
+LiPe_1s <- LiPe_preds3[LiPe_preds3$pres==1,]
+x_1s <- LiPe_1s$Long
+y_1s <- LiPe_1s$Lat
+xy_1s <- cbind(x_1s,y_1s)
+xy.sp_1s <- SpatialPoints(xy_1s)
+crs(xy.sp_1s) <- crs(LiPe_predictors)
+crs(xy.sp_1s)
+
+LiPe_0s <- LiPe_preds3[LiPe_preds3$pres==0,]
+x_0s <- LiPe_0s$Long
+y_0s <- LiPe_0s$Lat
+xy_0s <- cbind(x_0s,y_0s)
+xy.sp_0s <- SpatialPoints(xy_0s)
+crs(xy.sp_0s) <- crs(LiPe_predictors)
+crs(xy.sp_0s)
+```
+
+Look at which predictors are in our predictors stack:
+
+```{r}
+names(LiPe_predictors)
+```
+
+Here we drop the variables that were dropped from the LiPe_mod_new BRT model. This is so we can predict all locations using the subset of variables used in the model. In any model, the variables you use, need to match the variables you use to predict column names, or raster stack names need to match exactly.
+
+```{r}
+LiPe_preds_brt_new <- LiPe_predictors[[which(c(TRUE,TRUE,
+                                               TRUE,TRUE,
+                                               FALSE,FALSE))]]
+
+brt_pred <- predict(LiPe_preds_brt_new,
+                    LiPe_mod_new,
+                    type="link") #note we usually use type link, but the evaluate function is based on the "link" scale
+
+brt_eval_training <- dismo::evaluate(xy.sp_1s, 
+                                     xy.sp_0s, 
+                                     LiPe_mod_new, 
+                                     LiPe_preds_brt_new)
+```
+
+There are a variety of ways to calculate a threshold, maximising "kappa" is one well supported method, but there are many othersin Maxent we saw a table with a variety of ways to calculate thresholds.
+
+```{r}
+thresh_brt <- threshold(brt_eval_training, stat="kappa")
+```
+
+Another approach to thresholding - there are many choose the one that best fits in your model
+
+```{r}
+thresh_brt2 <- threshold(brt_eval_training, stat="spec_sens")
+
+m <- c(-5, thresh_brt, 0, thresh_brt, 2.1, 1)
+reclass <- matrix(m, ncol= 3, byrow=TRUE)
+rc_brt <- reclassify(brt_pred, reclass)
+
+plot(rc_brt)
+points(xy.sp_LiPe,pch=20,cex=0.2)
+```
+
+Look at training evaluation:
+
+```{r}
+brt_eval_training
+
+x_s <- LiPe_preds3$Long
+y_s <- LiPe_preds3$Lat
+xy_s <- cbind(x_s,y_s)
+xy.sp_s <- SpatialPoints(xy_s)
+crs(xy.sp_s) <- crs(LiPe_predictors)
+
+predicted <- raster::extract(rc_brt,xy.sp_s)
+
+test1 <- as.data.frame(cbind(predicted=predicted, 
+                             reference=LiPe_preds3$pres))
+
+test1$reference <- factor(test1$reference, levels=c("1","0"))
+test1$predicted <- factor(test1$predicted, levels=c("1","0"))
+
+conf_matrix <- confusionMatrix(test1$predicted,test1$reference)
+```
+
+This gives us the confusion matrix:
+
+```{r}
+conf_matrix$table
+
+TP <- conf_matrix$table[1,1]
+FP <- conf_matrix$table[1,2]
+FN <- conf_matrix$table[2,1]
+TN <- conf_matrix$table[2,2]
+
+FPR <- FP/(FP + TN)
+FNR <- FN/(FN + TP)
+TPR <- TP/(TP + FN)
+TNR <- TN/(TN + FP)
+
+TSS <- TPR + TNR - 1  #if we were predicting perfectly our TSS would=1
+TSS  #we are far from perfect in this model, and a much lower number that AUC
+```
+
+A perfect AUC value would also be 1. TSS often gives a better indication of prediction because it takes into account anbalanced errors between positives and negatives.
+
+```{r}
+Precision <- TP / (TP + FP)
+Recall <- TP / (TP + FN)
+F1 <- (2*Precision*Recall)/(Precision+Recall) #F1 is another statistic, now thought to be
+```
+
+Better than TSS:
+
+```{r}
+F1 <- TP /(TP + 0.5*(FP + FN)) #this is another way to calculate the same value
+```
+
+But the literature refers to Precision and Recall above (same thing though), again perfect score would be 1.
+
+```{r}
+F1 #as you can see in our case F1 falls between AUC and TSS scores
+```
+
+Now we are going to test our results from ALA records that were not from the FrogID project for the most part we are just repeating code from step 1.
+
+```{r}
+galah_config(email="r.clemens@griffith.edu.au")
+
+LiPe_ALA <- galah_call() %>%
+ galah_identify("Limnodynastes peroni") %>%
+ galah_filter(datasetName != "FrogID") %>%
+ galah_filter(coordinateUncertaintyInMeters < 200) %>%
+ galah_filter(year>1999)%>%
+ galah_filter(stateProvince == "Queensland") %>%
+ galah_select("datasetName","year") %>%
+ atlas_occurrences()
+```
+
+```{r}
+LiPe_ALA <- na.omit(LiPe_ALA)
+
+LiPe_pts_ALA <- SpatialPoints(coords=cbind(LiPe_ALA$decimalLongitude, LiPe_ALA$decimalLatitude),CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")) )
+
+LiPe_pres_ALA <- rep(1,length(LiPe_ALA$decimalLatitude))
+```
+
+Then create a raster with a value of 1 for each gridcell where a LiPe was recorded.
+
+```{r}
+LiPe_pres_raster_ALA <- raster::rasterize(LiPe_pts_ALA,base,LiPe_pres_ALA, fun=min, background=0)
+LiPe_pres_raster2_ALA <- raster::projectRaster(LiPe_pres_raster_ALA,base)
+LiPe_pres_raster2_ALA <- raster::mask(LiPe_pres_raster2_ALA,base)
+large_base <- aggregate(base, fact=4)
+cell_no_ALA <- raster::extract(large_base,LiPe_pts_ALA,cellnumbers=TRUE)
+LiPe_cells_ALA <- cbind(LiPe_ALA,cell_no_ALA)
+```
+
+```{r}
+require(dplyr)
+LiPe_thinned_ALA <- LiPe_cells_ALA %>% 
+ group_by(cells) %>% 
+ slice_sample(n=1)
+```
+
+```{r}
+frogs_ALA <- galah_call() %>%
+ galah_identify("Amphibia") %>%
+ galah_filter(datasetName != "FrogID") %>%
+ galah_filter(coordinateUncertaintyInMeters < 100) %>%
+ galah_filter(year>1999) %>%
+ galah_filter(stateProvince == "Queensland") %>%
+ galah_select("datasetName","year") %>%
+ atlas_occurrences()
+
+frogs_ALA$unique_visit <- paste0(frogs_ALA$decimalLatitude,
+                                 frogs_ALA$decimalLongitude,
+                                 frogs_ALA$eventDate)
+frogs_ALA$visitID <- as.numeric(as.factor(frogs_ALA$unique_visit))
+```
+
+```{r}
+frogs_ALA2 <- frogs_ALA %>%
+ group_by(decimalLatitude, decimalLongitude, visitID) %>%
+ summarise(no_spp=length(unique(scientificName)))
+
+frogs_ALA3 <- frogs_ALA2 %>%
+ group_by(decimalLatitude, decimalLongitude) %>%
+ summarise(no_visits=length(visitID))
+
+frogs_ALA3 <- na.omit(frogs_ALA3)
+
+visits_pts_ALA <- SpatialPoints(coords=cbind(frogs_ALA3$decimalLongitude,
+                                             frogs_ALA3$decimalLatitude),
+                                CRS(as.character("+proj=longlat +datum=WGS84 +no_defs")))
+b1_ALA <- rasterize(visits_pts_ALA, base, 
+                    frogs_ALA3$no_visits, 
+                    fun=sum, background=0)
+
+bb_ALA <- bbox(b1_ALA)
+visit_locations_ALA <- raster::extract(b1_ALA, 
+                                       visits_pts_ALA, 
+                                       cellnumbers=TRUE)
+visit_locations2_ALA <- as.data.frame(na.omit(visit_locations_ALA))
+cellID_ALA <- unique(visit_locations2_ALA$cells)
+```
+
+```{r}
+xy_visits_ALA <- raster::xyFromCell(b1_ALA,cell=cellID_ALA)
+
+cellStats(b1_ALA ,"max")
+m <- c(0, 2.9, 0, 2.9, 880, 1)
+reclass <- matrix(m, ncol= 3, byrow= TRUE)
+rc_ALA <- reclassify(b1_ALA, reclass)
+
+visits_3or_more_ALA <- mask(rc_ALA,base)
+
+Zero_LiPe_ALA <- visits_3or_more_ALA - LiPe_pres_raster2_ALA
+
+freq(Zero_LiPe_ALA)
+
+m <- c(-2, 0.1, 0, 0.1, 2, 1)
+reclass2 <- matrix(m, ncol= 3, byrow= TRUE)
+rc2_ALA <- reclassify(Zero_LiPe_ALA, reclass2)
+Zero_LiPe2_ALA <- mask(rc2_ALA,base)
+freq(Zero_LiPe2_ALA)
+```
+
+Extract the cell numbers from the 0 grid where the value ==1:
+
+```{r}
+cell_vals_0_ALA <- Which(Zero_LiPe2_ALA ==1,cells=TRUE)
+```
+
+These are the lat / longs for locations where at least three surveys were done, but zero LiPe were detected - these are our pseudo absences.
+
+```{r}
+xy_zero_LiPe_ALA <- xyFromCell(Zero_LiPe2_ALA,cell=cell_vals_0_ALA)
+```
+
+Plot the absence locations:
+
+```{r}
+plot(base)
+points(xy_zero_LiPe_ALA, pch=20,cex=0.2)
+xy_zero_LiPe_ALA <- as.data.frame(xy_zero_LiPe_ALA)
+```
+
+Now lets turn our presence and absence points into one dataset:
+
+```{r}
+head(LiPe_thinned_ALA)
+
+ALA_preds1 <- as.data.frame(cbind(Long=LiPe_thinned_ALA$decimalLongitude,
+                                  Lat=LiPe_thinned_ALA$decimalLatitude,
+                                  pres=1))
+ALA_preds2 <- as.data.frame(cbind(Long=xy_zero_LiPe_ALA$x,
+                                  Lat=xy_zero_LiPe_ALA$y,
+                                  pres=0))
+ALA_preds <- rbind(ALA_preds1,ALA_preds2)
+
+x_a <- ALA_preds$Long
+y_a <- ALA_preds$Lat
+xy_a <- cbind(x_a,y_a)
+xy.sp_a <- SpatialPoints(xy_a)
+crs(xy.sp_a) <- crs(LiPe_predictors)
+```
+
+Now we just extract the 1's & 0's using our lat longs from the new ALA data extracted from the same thresholded brt predictions from above.
+
+```{r}
+predicted_a <- raster::extract(rc_brt,xy.sp_a)
+
+test2 <- as.data.frame(cbind(predicted=predicted_a, 
+                             reference=ALA_preds$pres))
+
+test2$reference <- factor(test2$reference, levels=c("1","0"))
+test2$predicted <- factor(test2$predicted, levels=c("1","0"))
+
+conf_matrix2 <- confusionMatrix(test2$predicted,
+                                test2$reference)
+conf_matrix2
+
+TP2 <- conf_matrix2$table[1,1]
+FP2 <- conf_matrix2$table[1,2]
+FN2 <- conf_matrix2$table[2,1]
+TN2 <- conf_matrix2$table[2,2]
+
+FPR2 <- FP2/(FP2 + TN2)
+FNR2 <- FN2/(FN2 + TP2)
+TPR2 <- TP2/(TP2 + FN2)
+TNR2 <- TN2/(TN2 + FP2)
+
+TSS2 <- TPR2 + TNR2 - 1 
+TSS2 #notice this is a big drop from our original TSS statistic
+TSS
+
+Precision2 <- TP2 / (TP2 + FP2)
+Recall2 <- TP2 / (TP2 + FN2)
+F1_b <- 2*((Precision2*Recall2)/(Precision2+Recall2))
+F1_b #notice this is a very slight drop from our original F1 statsitic
+F1
+```
+
+When we used data to test the model that was not associated with the FrogID project, TSS, accuracy, and precision scores all fell markedly. Encouragingly the F1 score did not fall that much, and as a user you will need to decidd on what levels of accuracy in your confusion matrix are good enough for the intended use of the model.
+
+If I was looking to predict well in order to select what reserves to make for this frog, I would want better performance.
+
+The first step I would take to improve this model, would be to select pseudo_absence locations at only those locations where similarly distributed frogs were seen but our target species was not seen on three visits. Our psuedo absence points are still including places in the arid interior where this species would never occur.
+
+Second, as mentioned before, I would also look for better freshwater wetland layers, perhaps look at how often an area is wet over the last decade.
+
+ - [Other places to learn how to generate SDMs in R](http://www.earthskysea.org/best-practices-in-species-distribution-modeling-a-workshop-in-r/)
+ - [A series of lectures on SDMs](https://www.youtube.com/watch?v=obuMW5NAtJE).
+ 
+```{r}
+sessionInfo()
+```
