@@ -63,6 +63,14 @@ names(trait0a) <- c("species","trait","value","lat","lon")
 trait0b <- trait0a[!(trait0a$lat=="")&!(trait0a$lat=="NA")&!(trait0a$lat=="unknown"),]
 trait0b$id <- paste0(trait0b$lat, trait0b$lon)
 
+# show the subset of records with latitude longitude and at least 30 records for each trait and taxa combination
+trait00 <- trait0b[!is.na(as.numeric(as.character(trait0b$value))),]
+trait00$value <- as.numeric(trait00$value)
+Trait_summary <- aggregate(value ~ species + trait, FUN = length, data = trait00)
+Trait_summary2 <- Trait_summary[Trait_summary$value >30,]
+Trait_summary2$name <- paste0(Trait_summary2$species, ", - ", Trait_summary2$trait)
+Trait_summary2$name2 <- seq(1:length(Trait_summary2$name2))
+
 # create a vector of unique trait names
 traits <- unique(trait0b$trait)
 
