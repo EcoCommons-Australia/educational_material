@@ -1,0 +1,483 @@
+# exctracting Austrait data with a focus on the subset of records with coordinates (lat/long)
+
+# This document contains worked examples of how to summarise and extract species - trait data from the AusTraits database to be used in trait modelling experiments.
+
+# The following script is used to summarise species trait counts for records with unique latitude and longitude coordinates with more than 10 records. This is useful in filtering species trait combinations with usable record numbers. This process uses a combination of the AusTraits R package and some base R.
+
+# You may need to reset your local directory, and keep in mind directories are treated differently in R, Rmarkdown, and Jupyter
+
+# You must set your working directory to where you want things saved.
+
+
+#set file directory
+getwd()
+dir.create("~/AusTraits")
+setwd("~/AusTraits")
+
+
+# This script uses the austraits, tidyverse, dplyr, and remotes packages. These packages will need to be installed and loaded in to your library.
+
+#install and load packages 
+# install.packages(dplyr)
+# install.packages(tidyverse)
+# install.packages(remotes)
+# install.packages(austraits)
+##library(dplyr)
+library(tidyverse)
+library(remotes)
+library(terra)
+library(lme4)
+library(geodata)
+#library(sp)
+#library(geodata)
+library(mgcv)
+library(ggplot2)
+
+#Load AusTraits into your environment making sure to load the latest version.
+#The as_wide_table() function from the austraits package produces a tibble with all the databases information.
+
+remotes::install_github("traitecoevo/austraits", 
+                        dependencies = TRUE, upgrade = "ask", 
+                        build_vignettes = TRUE)
+library(austraits)
+
+# setwd to your local directory
+
+austraits <- load_austraits(path="data/austraits", version = get_version_latest())
+
+# a useful way to visualise the primary Austraits data table
+AusTraits_wide <- as_wide_table(austraits)
+
+# create a table that includes information from the locations table, and returns traits (a slight drop in the number of records, and different columns)
+trait0 <- (austraits %>% join_locations)$traits
+# use a variety of ways to check if the data filtering steps used filtered records correctly
+View(trait0) # view the entire database
+summary(trait0) # summarise the available data in each column of this dataframe. Note all columns show up as "Class:charater"
+# and many of these columns will need to be changed to numeric
+str(trait0) # describes the internal stucture of an object, in this case each column
+
+trait0a <-as.data.frame(trait0[,c(2,4,5,26,27)]%>% na.omit(trait2))
+names(trait0a) <- c("species","trait","value","lat","lon")
+trait0b <- trait0a[!(trait0a$lat=="")&!(trait0a$lat=="NA")&!(trait0a$lat=="unknown"),]
+trait0b$id <- paste0(trait0b$lat, trait0b$lon)
+
+# create a vector of unique trait names
+traits <- unique(trait0b$trait)
+
+# create an empty dataframe
+df <- data.frame(Trait = character(), Freq=as.numeric())
+df[1,1]<-NA
+df[1,2]<-NA
+
+# A for loop is an efficient way to return a summary table containing  counts of those traits
+# that were meaurured at more than ten unique locations (coordinates). 
+# Ten unique locations are required for geospatial predictions using
+# GAMs, or GLMMs in EcoCommons. This table indicates which trait/species combinations have enough data for analyses.
+# If you want to make geospatial predictions (how traits vary spatially), you need
+# all environmental predictor variables to be spatial grids (rasters) and
+# you need lat & lon data for each species trait records used in analysis.
+# It is possible to make non-geospatial predictions and there are many more records
+# in AusTraits currently that do not contain lat & lon currently (Jan 2023).
+
+
+for (i in 1:length(unique(traits))){
+  trait1 <- trait0b[trait0b$trait==unique(traits)[i],]
+  trait2 <- trait1[!duplicated(trait1[,c('id')]),]
+  trait4 <- table(trait2['species'])
+  trait5 <- na.omit(trait4)
+  trait6 <- as.data.frame(trait5)
+  trait7 <- trait6[-which(trait6$Freq < 10),]
+  names(trait7)[2] <- as.character(unique(traits)[i])
+  trait8 <- merge(df, trait7, all =TRUE)
+  df <- trait8
+}
+
+# this resulting table indicates for each species (taxon_name) how many measurements were taken in uniuqe locations
+# for example "leaf_mass_per_area" was measured in 20 unique locations for Acacia aneura
+df2<- df[,!names(df)%in% c("Trait","Freq")]
+
+# write to your working directory and folder
+write.csv(df2, "~/Documents/Use_cases/AUS_traits/AUS_traits_R/data/trait counts.csv")
+
+
+# Another way to produce summary tables for individual traits of interest across all species 
+# can be achieved using the following script. 
+
+# Load AusTraits into your environment making sure to load the latest version.
+
+# Extract the trait you wish to get a species count for. leaf_area is used in this example. 
+# Once the trait is extracted select columns "taxon_name", "trait_name", "value", "latitude (deg)", 
+# "longitude (deg)" and remove any NA values
+
+# extract trait of interest, in this case "leaf_area"
+trait1 <- trait0b[trait0b$trait=="leaf_area",]
+
+# turn id into a more sensible value in an id2 coumn
+# note we could use id2 as a random effect in the EcoCommons GLMM workflow
+# which takes the form y ~ x + (1|id2); where x is the trait of interest
+# GLMM uses all the available data, and groups data by unique locations
+# but for a GLMM you still would need to filter out locations that had too few records to measure
+# a separate intercept for that location (n=10 locations, is often used, but locations > 1 would also work)
+
+trait1_a <- trait1%>%
+  mutate(id2 = id %>% as.factor() %>% as.numeric())
+
+# turn the values in the value column back into numeric values - currently are character - type str(trait1_a) to check this
+
+# keep in mind that some trait values are not continuous (i.e. green, brown, etc), so would need to turn them into a factor 
+# however, leaf_area is a continuous trait
+
+trait1_a$value <- as.numeric(trait1_a$value)
+
+# EcoCommons will need to rename columns for "lat" & "lon" so we will do that now
+names(trait1_a)[4]<- "lat"
+names(trait1_a)[5]<- "lon"
+# We will also change "taxon_name" to "species"
+names(trait1_a)[1]<- "species"
+# lat lon columns also need to be numeric, not character
+trait1_a$lat <- as.numeric(trait1_a$lat)
+trait1_a$lon <- as.numeric(trait1_a$lon)
+
+# instead of using a variable intercept fixed slope GLMM model
+# we are going to take the mean trait value by unique site
+# we would not recommend throwing out (taking means) for all this data, but for GLM and GAM etc it provides simpler examples
+
+# notice this steps reduces our dataframe from one with 16,000+ records to one with 6,000+ records
+
+trait2 <- trait1_a%>%
+  group_by(species, trait,lat, lon, id2)%>%
+  summarise(value = mean(value))
+
+# Next we will look to generate a table with trait counts for all species (taxon_name) and remove NA values
+
+
+# get a count table of records for each taxon name
+trait4 <- table(trait2['species'])
+#remove taxon names with NA - none were present :)
+trait5 <- na.omit(trait4)
+#convert table to dataframe
+trait6 <- as.data.frame(trait5)
+
+# Filter the data frame to include only species with at least 10 unique locations for the "leaf_area" trait
+
+trait7 <- trait6[-which(trait6$Freq < 10),]
+
+view(trait7)
+
+# merge is a great way to combine two dataframes by column values that match in both tables (in this case species column)
+# setting all.y to TRUE ensures all the data from trait 2 is brought into the new dataframe
+trait8 <- merge(trait7,trait2, by = "species", all.y = TRUE)
+# we then remove all the rows of data which do not have a "Freq" value of ten or more
+# the resulting table could be used in a GLMM where species was the grouping variable
+# y ~ x1 + x2 + (1|species); where x1 is a environmental variable selected from a raster, x2 is another predictor variable etc
+# x1, x2 etc, values would need to be exctracted from a grid (see below)
+# or we could subset this dataframe to include records only from one species and that smaller dataframe could be used in
+# a GLM or GAM
+trait9 <- trait8[!is.na(trait8$Freq),]
+
+
+trait10 <- merge(trait7,trait1_a, by = "species", all.y = TRUE)
+# this could be used as a dataset for a GLMM with spatial data, it includes lat and long as well as a grouping
+# variable, so intercepts will vary by group with parallel slopes. This is the only form of GLMM available in
+# EcoCommons in late 2022:  y ~ x1 + x2 + (1|id2); where x1, x2 etc are extracted from rasters based on coordinates
+# species could be ignored in this GLMM, or if spatial predictions are not needed species could be added as a fixed effect
+trait11 <- trait10[!is.na(trait10$Freq),]
+
+############################################################################################################################
+############################################################################################################################
+
+#### another data formating option - keep in mind not all traits are continuous, some are factors
+# take the mean of trait values for each taxon, trait and set of coordinates, or if a factor return the unique factor(s) 
+trait0 <- (austraits %>% join_locations)$traits
+trait_1a <- trait0%>%
+  group_by(taxon_name,trait_name,`latitude (deg)`,`longitude (deg)`)%>%
+  summarise(mean_trait_value = ifelse(is.character(value), unique(value),mean(value)))
+
+# Some NA lat and longs in this table, but a useful way to summarise the data
+# again generally we recommend not taking the mean values (loss of information)
+
+# Here are examples of other ways to summarise trait data using the pivot.wider() function 
+# this is just a quick way to check if there are enough data in AusTraits to do the kind of analysis you are interested in
+
+# this provides a summary of the mean or if a character value is the unique value for any traits measured at the same lat lon
+# regardless of species
+# the pivot_wider function is from the tidyr package
+trait_1b <- pivot_wider(trait_1a,
+                        id_cols = c(taxon_name,'latitude (deg)','longitude (deg)'),
+                        names_from = trait_name,
+                        values_from = mean_trait_value,
+                        values_fn = ~ifelse(is.character(.x), unique(.x),mean(.x)) )
+
+# this gives us a summary of the mean or unique values for each species for each trait
+trait_1c <- pivot_wider(trait_1a,
+                        id_cols = taxon_name,
+                        names_from = trait_name,
+                        values_from = mean_trait_value,
+                        values_fn = ~ifelse(is.character(.x), unique(.x),mean(.x)) )
+
+# this provides a summary of the number of observations of trait by species that have a unique date and lat long
+trait_1d <- pivot_wider(trait_1a,
+                        id_cols = taxon_name,
+                        names_from = trait_name,
+                        values_from = mean_trait_value,
+                        values_fn = ~length(.x[!is.na(.x)]))
+
+# this provides a summary of the number of all observations of trait by species
+trait_1e <- pivot_wider(trait0,
+                        id_cols = taxon_name,
+                        names_from = trait_name,
+                        values_from = value,
+                        values_fn = ~length(.x[!is.na(.x)]))
+
+#############################################################################################################################
+#############################################################################################################################
+# The following script is used to extract species trait records with unique 
+# latitude and longitude coordinates from AusTraits to be uploaded to EcoCommons. 
+# It uses a combination of the AusTraits R package and base R functions.
+
+# You must set your working directory to where you want things saved.
+# setwd("~/Documents/AusTraits/data")
+
+# Using the austraits package, extract a trait. As above, leaf_area will be used as the example trait for this exercise. 
+# Join the selected trait from all sites and all studies using the join_sites function in the austraits package
+
+# extract a trait and join all sites
+leaf0 <- extract_trait(austraits, "leaf_area")
+
+leaf1 <- (leaf0 %>% join_locations)$traits
+
+# Create a new column called "record_id" which acts to assign a sequential number to each record. 
+# This makes sure the pivot_wider function does not collapse records into a single record.
+
+# create a column "record_id" to add a sequential number to each record
+leaf2 <- leaf1$record_id<-rep(1:(length(leaf1$dataset_id)))
+
+# Select the columns that you wish to keep. These are "taxon_name", "trait_name", "value", "latitude (deg)", "longitude (deg)", & "record_id" 
+# and are represented by their column number in the script below. 
+# Remove any NA values using na.omit
+
+# select columns 
+leaf3 <- leaf1[,c(2,4,5,26,27,28)]
+#remove NA values
+leaf4 <- na.omit(leaf3)
+
+# Merge the latitude and longitude columns into a new column called id. 
+# This will create the coordinates that will be filtered to extract unique coordinates.
+
+# merge "latitude (deg)" and "longitude (deg)" into a new column called id
+leaf4$id <- paste0(leaf4$`latitude (deg)`, leaf4$`longitude (deg)`)
+
+
+# Rename column headings. This is important because EcoCommons requires 3 specific headings in specific order. 
+# These are "species", "lat", "lon". Trait names follow. 
+
+#re-name columns
+colnames(leaf4) <- c("species", "trait_name", 
+                     "trait_value", "lat", "lon", "record id", "id")
+
+# The AusTraits database is in long format, so the trait name and values need to be pivoted to wide format. 
+# This is achieved by using the pivot_wider function using trait_name as the names_from value and trait_value as values_from.
+
+# use the pivot wider function to create the trait column, this is useful if there are many traits
+leaf5 <- pivot_wider(leaf4, names_from = trait_name, 
+                     values_from = trait_value)
+# alternatively if you have subsetted to one trait, the trait_value column could be renamed to "leaf_area"
+
+# Filter unique cooridinates using the "id" column that was generated earlier.
+# Select "species", "lat", "lon", & "leaf_area" columns.
+
+# take the mean "leaf_area" value for each unique set of lat/lon coordinates
+leaf6 <- leaf5%>%
+  group_by(species, lat, lon)%>%
+  summarise(leaf_area = mean(leaf_area))
+
+#remove the one record with empty values for lat and lon
+leaf7 <- leaf6[leaf6$lat!="",]
+
+# notice the leaf7 and trait2 are nearly the same dataframes, but we used different steps to generate those dataframes.
+
+
+# Next filter for the species you want to explore. This can be done as individual or multiple 
+# species. Pittosporum undulatum is used in this example as it has the highest number of 
+# unique records for the leaf area trait.  
+# Finally export the dataframe as a .csv file using write.csv(). This file can be uploaded to EcoCommons. 
+
+# filter for species (more than one species can be included)
+leaf8 <-  filter(leaf7, species %in% c("Pittosporum undulatum")) 
+# write csv file                              
+write_csv(leaf8, "~/Pittosporum_undulatum_leaf_area_unique.csv")
+
+
+# This is an example of how to perform a Generalized Linear Model in R using the data extracted 
+# from AusTriats. Pittosporum undulatum leaf area trait will be used for this exercise as the dependent or response variable
+
+# Rename leaf8
+leaf_area <- leaf8
+leaf_area$lat <- as.numeric(leaf_area$lat)
+leaf_area$lon <- as.numeric(leaf_area$lon)
+# or read it in if needed
+# leaf_area <- read_csv("Pittosporum_undulatum_leaf_area_unique.csv")
+# create a vector
+LA <- vect(leaf_area)
+
+# Import some bioclim climate data -- available data  var = "tmin", "tmax", "tavg","prec","wind","vapr","bio"
+# could download world data as well see more here https://cran.r-project.org/web/packages/geodata/geodata.pdf
+env <- geodata::worldclim_country(country = "Australia", var="bio", path = "~/Documents/Use_cases/AUS_traits/AUS_traits_R/data", version="2.1")
+plot(env)
+
+# select environmental variables
+env1 <- env[[c(1,12)]]
+# name environmental variables
+names(env1) <- c("Temp_annual_mean","Prec_annual_mean")
+plot(env1)
+
+# Create a location data frame by selecting the lat lon columns from leaf_area
+
+# select locations
+names(leaf_area)
+leaf_area1 <- as.data.frame(leaf_area)
+locations <- terra::vect(leaf_area[,c(3,2)])
+
+
+# extract the "Temp_annual_mean" & "Prec_annual_mean" variables for each record
+# based on the lat lon locations 
+leaf_area_env <- terra::extract(env1, locations)
+#add these locations to trait data
+leaf_area2 <- cbind(leaf_area1, leaf_area_env)
+#create dataframe 
+leaf_area3 <- as.data.frame(leaf_area2)
+# a simple way to generate a correlation matrix, we can see temp and prec variables are
+# highly correlated, so if doing this for real we would want to find less correlated variables
+plot(leaf_area3[,c(4,6,7)])
+
+# here we run a simple glm, and use the resulting model to predict to a spatial raster stack
+# this allows us to predict how variables change across Australia
+# this species does not occur throughout Australia, and it is a poor model
+# but this shows how to run the model and make the predictions
+
+glm1 <- glm(leaf_area~Temp_annual_mean + Prec_annual_mean, data = leaf_area3)
+plot(glm1) # note these residual plots look terrible, this is a terrible model
+glm_p <- raster::predict(env1, glm1, type = "response", na.rm=TRUE)
+plot(glm_p)    
+
+# We will now demonstrate a Generalized Additive Model (GAM)
+leaf_area4 <- leaf_area3
+# a problem common in geographic data relates to spatial autocorrelation, in these data
+# locations close to one another have identical values for temperature and precipitation
+# This results in there being insufficient variation in the data to fit 10 knots (wiggles)
+# for demonstration purposes we add the id column to these data to create meaningless variation 
+# which makes the GAM work, but again, this is a terrible example of species trait modelling
+leaf_area4$Temp_annual_mean <- leaf_area4$ID+leaf_area4$Temp_annual_mean
+leaf_area4$Prec_annual_mean <- leaf_area4$ID+leaf_area4$Prec_annual_mean
+gam1<- gam(leaf_area ~ s(Temp_annual_mean, bs="cr") + s(Prec_annual_mean, bs="cr"), data = leaf_area4)
+gam.check(gam1)  # looks terrible - not surprisingly a  terrible model
+gam_pred <- predict(env1,gam1,type="response")
+# remember we added the column ID to our values, but there is no such thing in our rasters
+# so these terrible maps look even worse than they should, but it shows how to 
+# generate these mapped predictions
+plot(gam_pred)
+points(locations)
+
+# Generalized Linear Mixed Models (GLMM) are used to run GLMs for multiple factors inside a single model. 
+## Here we run a mixed effects model, GLMM with fixed slopes and variable intercepts, we will need a categorical
+# groupling variable first
+
+# we created an ID column for each unique site for leaf area, but this is too many groups for a sensible looking
+# graph, so we will choose a few of the sites with the most data
+
+names(trait11)
+trait12 <- trait11[trait11$id2==10 | trait11$id2==77 | trait11$id2==95 | trait11$id2==273 | trait11$id2==402 | trait11$id2==723 | trait11$id2==845 |trait11$id2==906,]
+trait12$lat <- as.numeric(trait12$lat)
+trait12$lon <- as.numeric(trait12$lon)
+locations2 <- terra::vect(trait12[,c(6,5)])
+traits_env <- terra::extract(env1, locations2)
+trait13 <- as.data.frame(cbind(trait12, traits_env))
+# here we again added ID which is completely silly to get some values in our predictors which were different
+trait13$Temp_annual_mean <- trait13$ID+trait13$Temp_annual_mean
+trait13$Prec_annual_mean <- trait13$ID+trait13$Prec_annual_mean
+
+glmm1<-lmer(value ~ Temp_annual_mean + Prec_annual_mean + (1|id2),data = trait13)
+glmm1
+summary(glmm1)
+plot(glmm1)
+# get the random intercepts for each factor
+ranef(glmm1)
+
+# now lets plot this https://glennwilliams.me/r4psych/mixed-effects-models.html 
+coef(glmm1)
+# group coefficients
+
+model_coefs <- coef(glmm1)$id2 %>% 
+  rename(Intercept = '(Intercept)', Slope = 'Temp_annual_mean') %>% 
+  rownames_to_column("id2")
+trait13$id2 <- as.character(trait13$id2)
+groups_rani <- left_join(trait13, model_coefs, by = "id2")
+
+# GGplot 
+
+model_coef_plot <- ggplot(data = groups_rani, 
+                          mapping = aes(x = Temp_annual_mean, 
+                                        y = value, 
+                                        colour = id2)
+) +
+  geom_point(na.rm = T, alpha = 0.5) +
+  geom_abline(aes(intercept = Intercept, 
+                  slope = Slope,
+                  colour = id2
+  ),
+  size = 1.5
+  ) +
+  scale_y_continuous(limits = c(70, 21300)) +
+  scale_x_continuous(limits = c(132,508)) +
+  theme(legend.position = "top")
+
+# see your plot
+model_coef_plot
+
+# Here we demonstrate how to use a shapefile of Australian states to add a column of state names to
+# our dataframe, In this case all our locations are in NSW so we won't run a GLMM, but we demonstrate
+# how to extract a spatial factor such as state into a dataframe below
+
+# environmental shape files will need to be downloaded, these can be downloaded 
+# a state boundary file from the Australian Bureau of Statistics will need to be downloaded first.
+# download the "States and Territories - 2021 - Shapefile"
+
+# https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files
+
+# set the working directory to where you downloaded the shapefile folder
+setwd("~/Downloads/STE_2021_AUST_SHP_GDA2020")
+#create a vector of the shape file
+shp = terra::vect("STE_2021_AUST_GDA2020.shp")
+#create a raster 
+shp2 <- rasterize(shp, env1[[1]], field="STE_CODE21")
+#project the rasters created
+shp3 <- terra::project(shp2, env1)
+plot(shp3)
+env3 <- c(env1,shp3)
+# 
+la_env <- terra::extract(env3, locations)
+la1 <- cbind(locations, la_env)
+la2 <- as.data.frame(la1)
+la3 <- na.omit(la2)
+la3$STE_CODE21 <- as.factor(la3$STE_CODE21) 
+
+## Here we reduce the area we are going to predict in to just NSW, the
+# state where available data was collected.
+
+# first set all values not equal to zero (NSW), to NA
+NSW <- ifel(shp2 == 0,shp2, NA)
+# Make all the rater values for NSW equal to 1, not required, but good practice
+NSW <- NSW+1
+# remove the  outer NA Values from the raster
+NSW2 <- trim(NSW)
+# plot the NSW raster boundary
+plot(NSW2)
+points(locations)
+# crop the environmental predictors we used for all of Australia to just NSW
+env4 <- crop(env1,NSW2)
+# take the GLM object we generated above and predict into just NSW
+glm_p2 <- raster::predict(env4, glm1, type = "response", na.rm=TRUE)
+# plot the NSW predictions
+plot(glm_p2)
+# plot the point locations on our predictions (pch = symbol for point locations, CEX = size of pch symbol)
+points(locations, pch =1,cex=3)
