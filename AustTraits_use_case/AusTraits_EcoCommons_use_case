@@ -45,6 +45,8 @@ library(austraits)
 
 austraits <- load_austraits(path="data/austraits", version = get_version_latest())
 
+AusTr_summary <- summarise_austraits(austraits, "trait_name")
+
 # a useful way to visualise the primary Austraits data table
 AusTraits_wide <- as_wide_table(austraits)
 
