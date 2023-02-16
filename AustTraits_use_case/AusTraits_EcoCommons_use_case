@@ -444,6 +444,59 @@ model_coef_plot <- ggplot(data = groups_rani,
 # see your plot
 model_coef_plot
 
+# test for a non-linear relationship - plots indicate relationship
+# is not linear, so this model is not appropriate
+ggplot(data.frame(Temp_annual_mean=trait13$Temp_annual_mean,pearson=residuals(glmm1,type="pearson")),
+       aes(x=Temp_annual_mean,y=pearson)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(data.frame(Prec_annual_mean=trait13$Prec_annual_mean,pearson=residuals(glmm1,type="pearson")),
+       aes(x=Prec_annual_mean,y=pearson)) +
+  geom_point() +
+  theme_bw()
+######################################################################################
+######################################################################################
+# we now show how we could use species as a random effect rather than site (id2)
+glmm2<-lmer(value ~ Temp_annual_mean + Prec_annual_mean + (1|species),data = trait13)
+glmm2
+summary(glmm2)
+plot(glmm2)
+# get the random intercepts for each factor
+ranef(glmm2)
+
+# now lets plot this https://glennwilliams.me/r4psych/mixed-effects-models.html 
+coef(glmm2)
+# group coefficients
+
+model_coefs2 <- coef(glmm2)$species %>% 
+  rename(Intercept = '(Intercept)', Slope = 'Temp_annual_mean') %>% 
+  rownames_to_column("species")
+trait13$id2 <- as.character(trait13$id2)
+groups_rani <- left_join(trait13, model_coefs2, by = "species")
+
+# GGplot 
+
+model_coef_plot <- ggplot(data = groups_rani, 
+                          mapping = aes(x = Temp_annual_mean, 
+                                        y = value, 
+                                        colour = species)
+) +
+  geom_point(na.rm = T, alpha = 0.5) +
+  geom_abline(aes(intercept = Intercept, 
+                  slope = Slope,
+                  colour = species
+  ),
+  size = 1.5
+  ) +
+  scale_y_continuous(limits = c(70, 21300)) +
+  scale_x_continuous(limits = c(12,400)) +
+  theme(legend.position = "top")
+
+# see your plot
+model_coef_plot
+
+
 # Here we demonstrate how to use a shapefile of Australian states to add a column of state names to
 # our dataframe, In this case all our locations are in NSW so we won't run a GLMM, but we demonstrate
 # how to extract a spatial factor such as state into a dataframe below
