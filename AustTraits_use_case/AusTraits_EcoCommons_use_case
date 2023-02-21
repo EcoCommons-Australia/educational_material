@@ -58,6 +58,20 @@ summary(trait0) # summarise the available data in each column of this dataframe.
 # and many of these columns will need to be changed to numeric
 str(trait0) # describes the internal stucture of an object, in this case each column
 
+# There are many different kinds of data in AusTraits:
+
+# The entity_type column indicates if the trait value is scored from a whole species, a population, or an individual plant.
+unique(trait0$entity_type)
+
+# The value_type column tells us whether the trait value is a minumum, maximum, mean or mode etc.
+unique(trait0$value_type)
+
+# The basis_of_record column refers to how the data was collected - was it measured on a preserved specimen or in the field?
+unique(trait0$basis_of_record)
+
+# The life_stage column tells us whether the data was collected from seedling, juvenile, sapling or adult plants
+unique(trait0$life_stage)
+
 trait0a <-as.data.frame(trait0[,c(2,4,5,26,27)]%>% na.omit(trait2))
 names(trait0a) <- c("species","trait","value","lat","lon")
 trait0b <- trait0a[!(trait0a$lat=="")&!(trait0a$lat=="NA")&!(trait0a$lat=="unknown"),]
